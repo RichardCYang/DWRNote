@@ -303,7 +303,7 @@ body {
 
 /* 버튼 스타일 공통 */
 .primary-button {
-    border: none;
+	border: none;
     border-radius: 6px;
     padding: 6px 12px;
     font-size: 13px;
@@ -399,8 +399,35 @@ body {
     color: #6b7280;
 }
 
-/* 반응형 간단 대응 */
+/* 사이드바 하단 새 페이지 버튼 전용 스타일 */
+.sidebar-footer {
+    padding: 12px 16px 16px;
+    border-top: 1px solid #e5e7eb;
+    background-color: #fafafa;
+}
 
+.sidebar-new-page-button {
+    /* 기본 primary-button 스타일을 가져오되 색상만 부드럽게 오버라이드 */
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+
+    background-color: #e5e7eb;   /* 밝은 회색 톤 */
+    color: #374151;              /* 딥 그레이 텍스트 */
+    font-weight: 500;
+}
+
+.sidebar-new-page-button i {
+    font-size: 12px;
+}
+
+.sidebar-new-page-button:hover {
+    background-color: #e0e7ff;   /* 아주 은은한 파란기 도는 회색 */
+}
+
+/* 반응형 간단 대응 */
 @media (max-width: 768px) {
     .sidebar {
         display: none;

@@ -18,11 +18,6 @@
                     <span class="app-logo">📝</span>
                     <span class="app-title">DWRNote</span>
                 </div>
-                <div class="app-header-right">
-                    <button id="new-page-btn" class="primary-button">
-                        + 새 페이지
-                    </button>
-                </div>
             </header>
             <div class="app-body">
                 <aside class="sidebar">
@@ -30,6 +25,22 @@
                         <span class="sidebar-title">페이지</span>
                     </div>
                     <ul id="page-list" class="page-list"></ul>
+
+                    <!-- 스크롤 되는 페이지 리스트 영역 -->
+                    <div class="sidebar-main">
+                        <ul id="page-list" class="page-list"></ul>
+                    </div>
+
+                    <!-- 하단 고정 새 페이지 버튼 -->
+                    <div class="sidebar-footer">
+                        <button
+                            id="new-page-btn"
+                            class="primary-button sidebar-new-page-button"
+                        >
+                            <i class="fa-solid fa-plus"></i>
+                            <span>새 페이지</span>
+                        </button>
+                    </div>
                 </aside>
                 <main class="editor-area">
                     <div class="editor-header">
