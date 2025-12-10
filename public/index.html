@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ko">
+    <head>
+        <meta charset="UTF-8" />
+        <title>DWRNote</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <!-- Font Awesome 아이콘 -->
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+        />
+        <link rel="stylesheet" href="/styles.css" />
+    </head>
+    <body>
+        <div class="app">
+            <header class="app-header">
+                <div class="app-header-left">
+                    <span class="app-logo">📝</span>
+                    <span class="app-title">DWRNote</span>
+                </div>
+                <div class="app-header-right">
+                    <button id="new-page-btn" class="primary-button">
+                        + 새 페이지
+                    </button>
+                </div>
+            </header>
+            <div class="app-body">
+                <aside class="sidebar">
+                    <div class="sidebar-header">
+                        <span class="sidebar-title">페이지</span>
+                    </div>
+                    <ul id="page-list" class="page-list"></ul>
+                </aside>
+                <main class="editor-area">
+                    <div class="editor-header">
+                        <input
+                            id="page-title-input"
+                            class="page-title-input"
+                            placeholder="제목 없음"
+                        />
+                        <button id="save-page-btn" class="primary-button">
+                            저장
+                        </button>
+                        <button id="delete-page-btn" class="danger-button">
+                            삭제
+                        </button>
+                    </div>
+                    <div class="editor-toolbar">
+                        <button type="button" data-command="bold">
+                            <b>B</b>
+                        </button>
+                        <button type="button" data-command="italic">
+                            <i>I</i>
+                        </button>
+                        <button type="button" data-command="strike">
+                            <s>S</s>
+                        </button>
+
+                        <!-- 텍스트 색상 드롭다운 -->
+                        <div class="toolbar-color-dropdown" data-role="color-dropdown">
+                            <!-- 드롭다운 토글 버튼 -->
+                            <button
+                                type="button"
+                                class="toolbar-button"
+                                data-command="toggleColorDropdown"
+                                title="텍스트 색상"
+                                aria-label="텍스트 색상"
+                            >
+                                <i class="fa-solid fa-font"></i>
+                                <i class="fa-solid fa-caret-down caret-icon"></i>
+                            </button>
+
+                            <!-- 실제 색상 리스트 메뉴 -->
+                            <div class="toolbar-color-menu" data-color-menu hidden>
+                                <button
+                                    type="button"
+                                    class="color-option"
+                                    data-command="setColor"
+                                    data-color="#111827"
+                                    title="기본(검정)"
+                                >
+                                    <span class="color-swatch" style="background-color: #111827"></span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="color-option"
+                                    data-command="setColor"
+                                    data-color="#ef4444"
+                                    title="빨강"
+                                >
+                                    <span class="color-swatch" style="background-color: #ef4444"></span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="color-option"
+                                    data-command="setColor"
+                                    data-color="#10b981"
+                                    title="초록"
+                                >
+                                    <span class="color-swatch" style="background-color: #10b981"></span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="color-option"
+                                    data-command="setColor"
+                                    data-color="#3b82f6"
+                                    title="파랑"
+                                >
+                                    <span class="color-swatch" style="background-color: #3b82f6"></span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="color-option"
+                                    data-command="setColor"
+                                    data-color="#f59e0b"
+                                    title="주황"
+                                >
+                                    <span class="color-swatch" style="background-color: #f59e0b"></span>
+                                </button>
+
+                                <!-- 색상 초기화 -->
+                                <button
+                                    type="button"
+                                    class="color-option color-option--clear"
+                                    data-command="unsetColor"
+                                    title="텍스트 색상 초기화"
+                                >
+                                    <i class="fa-solid fa-eraser"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <span class="toolbar-separator"></span>
+
+                        <button type="button" data-command="h1">H1</button>
+                        <button type="button" data-command="h2">H2</button>
+
+                        <button type="button" data-command="bulletList">
+                            • 리스트
+                        </button>
+                        <button type="button" data-command="orderedList">
+                            1. 리스트
+                        </button>
+
+                        <!-- 정렬 버튼들 (Left / Center / Right / Justify) -->
+                        <span class="toolbar-separator"></span>
+
+                        <!-- 왼쪽 정렬 -->
+                        <button
+                            type="button"
+                            data-command="alignLeft"
+                            title="왼쪽 정렬"
+                            aria-label="왼쪽 정렬"
+                        >
+                            <i class="fa-solid fa-align-left"></i>
+                        </button>
+
+                        <!-- 가운데 정렬 -->
+                        <button
+                            type="button"
+                            data-command="alignCenter"
+                            title="가운데 정렬"
+                            aria-label="가운데 정렬"
+                        >
+                            <i class="fa-solid fa-align-center"></i>
+                        </button>
+
+                        <!-- 오른쪽 정렬 -->
+                        <button
+                            type="button"
+                            data-command="alignRight"
+                            title="오른쪽 정렬"
+                            aria-label="오른쪽 정렬"
+                        >
+                            <i class="fa-solid fa-align-right"></i>
+                        </button>
+
+                        <!-- 양쪽 정렬 -->
+                        <button
+                            type="button"
+                            data-command="alignJustify"
+                            title="양쪽 정렬"
+                            aria-label="양쪽 정렬"
+                        >
+                            <i class="fa-solid fa-align-justify"></i>
+                        </button>
+
+                        <span class="toolbar-separator"></span>
+
+                        <button type="button" data-command="blockquote">
+                            “ 인용
+                        </button>
+                        <button type="button" data-command="codeBlock">
+                            { } 코드
+                        </button>
+                    </div>
+                    <div id="editor" class="editor"></div>
+                </main>
+            </div>
+        </div>
+        <!-- Tiptap 브라우저 번들 (전역 Tiptap 객체 제공) -->
+        <script src="https://cdn.jsdelivr.net/gh/panphora/tiptap-for-browser@2.0.0-beta.166/tiptap-for-browser.min.js"></script>
+
+        <!-- 우리 앱 코드 (이제 import 안 씀, 전역 Tiptap 사용) -->
+        <script type="module" src="/app.js"></script>
+    </body>
+</html>
