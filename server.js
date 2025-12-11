@@ -616,6 +616,44 @@ app.post("/api/collections", authMiddleware, async (req, res) => {
 });
 
 /**
+ * 컬렉션 삭제
+ * DELETE /api/collections/:id
+ */
+app.delete("/api/collections/:id", authMiddleware, async (req, res) => {
+    const id = req.params.id;
+    const userId = req.user.id;
+
+    try {
+        const [rows] = await pool.execute(
+            `
+            SELECT id
+            FROM collections
+            WHERE id = ? AND user_id = ?
+            `,
+            [id, userId]
+        );
+
+        if (!rows.length) {
+            return res.status(404).json({ error: "컬렉션을 찾을 수 없습니다." });
+        }
+
+        // 컬렉션 삭제 (pages는 FK CASCADE)
+        await pool.execute(
+            `
+            DELETE FROM collections
+            WHERE id = ? AND user_id = ?
+            `,
+            [id, userId]
+        );
+
+        res.json({ ok: true, removedId: id });
+    } catch (error) {
+        console.error("DELETE /api/collections/:id 오류:", error);
+        res.status(500).json({ error: "컬렉션 삭제에 실패했습니다." });
+    }
+});
+
+/**
  * 페이지 목록 조회
  * GET /api/pages
  */

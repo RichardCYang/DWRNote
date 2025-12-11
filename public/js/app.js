@@ -55,6 +55,7 @@ let pages = [];
 let collections = [];
 let currentPageId = null;
 let currentCollectionId = null;
+let expandedCollections = new Set();
 let colorDropdownElement = null;
 let colorMenuElement = null;
 
@@ -695,7 +696,13 @@ function renderPageList() {
 
         const title = document.createElement("div");
         title.className = "collection-title";
-        title.innerHTML = `<i class="fa-regular fa-folder"></i> ${collection.name || "제목 없음"}`;
+        title.innerHTML = `
+            <span class="collection-toggle ${expandedCollections.has(collection.id) ? "expanded" : ""}">
+                <i class="fa-solid fa-caret-right"></i>
+            </span>
+            <i class="fa-regular fa-folder"></i>
+            <span>${collection.name || "제목 없음"}</span>
+        `;
 
         const actions = document.createElement("div");
         actions.className = "collection-actions";
@@ -707,66 +714,117 @@ function renderPageList() {
         addBtn.title = "이 컬렉션에 페이지 추가";
         addBtn.innerHTML = `<i class="fa-solid fa-plus"></i>`;
 
-        const meta = document.createElement("div");
-        meta.className = "collection-meta";
-        meta.textContent = collection.updatedAt
-            ? new Date(collection.updatedAt).toLocaleDateString()
-            : "";
+        const menuBtn = document.createElement("button");
+        menuBtn.type = "button";
+        menuBtn.className = "collection-menu-btn";
+        menuBtn.dataset.collectionId = collection.id;
+        menuBtn.title = "컬렉션 메뉴";
+        menuBtn.innerHTML = `<i class="fa-solid fa-ellipsis-vertical"></i>`;
 
-        actions.appendChild(meta);
+        const menu = document.createElement("div");
+        menu.className = "dropdown-menu collection-menu hidden";
+        menu.innerHTML = `
+            <button data-action="delete-collection" data-collection-id="${collection.id}">
+                <i class="fa-regular fa-trash-can"></i>
+                컬렉션 삭제
+            </button>
+        `;
+
         actions.appendChild(addBtn);
+        actions.appendChild(menuBtn);
+        actions.appendChild(menu);
 
         header.appendChild(title);
         header.appendChild(actions);
 
         item.appendChild(header);
 
-        const pageList = document.createElement("ul");
-        pageList.className = "page-list";
+        const expanded = expandedCollections.has(collection.id);
+        if (expanded) {
+            const pageList = document.createElement("ul");
+            pageList.className = "page-list";
 
-        const colPages = pages.filter((p) => p.collectionId === collection.id);
-        if (!colPages.length) {
-            const empty = document.createElement("div");
-            empty.className = "collection-empty";
-            empty.textContent = "페이지가 없습니다. 새 페이지를 추가하세요.";
-            item.appendChild(empty);
-        } else {
-            const tree = buildPageTree(colPages);
+            const colPages = pages.filter((p) => p.collectionId === collection.id);
+            if (!colPages.length) {
+                const empty = document.createElement("div");
+                empty.className = "collection-empty";
+                empty.textContent = "페이지가 없습니다. 새 페이지를 추가하세요.";
+                item.appendChild(empty);
+            } else {
+                const tree = buildPageTree(colPages);
 
-            function renderNode(node, depth) {
-                const li = document.createElement("li");
-                li.className = "page-list-item";
-                li.dataset.pageId = node.id;
+                function renderNode(node, depth) {
+                    const li = document.createElement("li");
+                    li.className = "page-list-item";
+                    li.dataset.pageId = node.id;
 
-                // 깊이에 따른 들여쓰기
-                li.style.paddingLeft = 14 + depth * 16 + "px";
+                    // 깊이에 따른 들여쓰기
+                    li.style.paddingLeft = 14 + depth * 16 + "px";
 
-                const titleSpan = document.createElement("span");
-                titleSpan.className = "page-list-item-title";
-                titleSpan.textContent = node.title || "제목 없음";
+                    const row = document.createElement("div");
+                    row.style.display = "flex";
+                    row.style.alignItems = "center";
+                    row.style.justifyContent = "space-between";
+                    row.style.gap = "8px";
 
-                const dateSpan = document.createElement("span");
-                dateSpan.className = "page-list-item-date";
-                dateSpan.textContent = node.updatedAt
-                    ? new Date(node.updatedAt).toLocaleString()
-                    : "";
+                    const titleWrap = document.createElement("div");
+                    titleWrap.style.display = "flex";
+                    titleWrap.style.flexDirection = "column";
+                    titleWrap.style.gap = "2px";
 
-                li.appendChild(titleSpan);
-                li.appendChild(dateSpan);
+                    const titleSpan = document.createElement("span");
+                    titleSpan.className = "page-list-item-title";
+                    titleSpan.textContent = node.title || "제목 없음";
 
-                if (node.id === currentPageId) {
-                    li.classList.add("active");
+                    const dateSpan = document.createElement("span");
+                    dateSpan.className = "page-list-item-date";
+                    dateSpan.textContent = node.updatedAt
+                        ? new Date(node.updatedAt).toLocaleString()
+                        : "";
+
+                    titleWrap.appendChild(titleSpan);
+                    titleWrap.appendChild(dateSpan);
+
+                    const pageMenuBtn = document.createElement("button");
+                    pageMenuBtn.type = "button";
+                    pageMenuBtn.className = "page-menu-btn";
+                    pageMenuBtn.dataset.pageId = node.id;
+                    pageMenuBtn.title = "페이지 메뉴";
+                    pageMenuBtn.innerHTML = `<i class="fa-solid fa-ellipsis-vertical"></i>`;
+
+                    const pageMenu = document.createElement("div");
+                    pageMenu.className = "dropdown-menu page-menu hidden";
+                    pageMenu.innerHTML = `
+                        <button data-action="delete-page" data-page-id="${node.id}">
+                            <i class="fa-regular fa-trash-can"></i>
+                            페이지 삭제
+                        </button>
+                    `;
+
+                    const right = document.createElement("div");
+                    right.className = "page-menu-wrapper";
+                    right.appendChild(pageMenuBtn);
+                    right.appendChild(pageMenu);
+
+                    row.appendChild(titleWrap);
+                    row.appendChild(right);
+
+                    li.appendChild(row);
+
+                    if (node.id === currentPageId) {
+                        li.classList.add("active");
+                    }
+
+                    pageList.appendChild(li);
+
+                    if (node.children && node.children.length) {
+                        node.children.forEach((child) => renderNode(child, depth + 1));
+                    }
                 }
 
-                pageList.appendChild(li);
-
-                if (node.children && node.children.length) {
-                    node.children.forEach((child) => renderNode(child, depth + 1));
-                }
+                tree.forEach((node) => renderNode(node, 0));
+                item.appendChild(pageList);
             }
-
-            tree.forEach((node) => renderNode(node, 0));
-            item.appendChild(pageList);
         }
 
         listEl.appendChild(item);
@@ -791,6 +849,7 @@ async function loadPage(id) {
         currentPageId = page.id;
         if (page.collectionId) {
             currentCollectionId = page.collectionId;
+            expandedCollections.add(page.collectionId);
         }
 
         const titleInput = document.querySelector("#page-title-input");
@@ -809,6 +868,26 @@ async function loadPage(id) {
     }
 }
 
+function closeAllDropdowns() {
+    document.querySelectorAll(".dropdown-menu").forEach((menu) => {
+        menu.classList.add("hidden");
+        menu.style.left = "";
+        menu.style.top = "";
+        menu.style.position = "";
+    });
+}
+
+function openDropdown(menu, trigger) {
+    if (!menu || !trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const left = rect.right + 6;
+    const top = rect.top;
+    menu.style.position = "fixed";
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.classList.remove("hidden");
+}
+
 function bindPageListClick() {
     const listEl = document.querySelector("#collection-list");
     if (!listEl) {
@@ -816,12 +895,87 @@ function bindPageListClick() {
     }
 
     listEl.addEventListener("click", async (event) => {
+        // 컬렉션 메뉴 토글
+        const colMenuBtn = event.target.closest(".collection-menu-btn");
+        if (colMenuBtn) {
+            const container = colMenuBtn.closest(".collection-item");
+            const menu = container ? container.querySelector(".collection-menu") : null;
+            if (menu) {
+                closeAllDropdowns();
+                if (menu.classList.contains("hidden")) {
+                    openDropdown(menu, colMenuBtn);
+                } else {
+                    closeAllDropdowns();
+                }
+            }
+            return;
+        }
+
+        // 컬렉션 메뉴 액션
+        const colMenuAction = event.target.closest(".collection-menu button");
+        if (colMenuAction) {
+            const action = colMenuAction.dataset.action;
+            const colId = colMenuAction.dataset.collectionId;
+            if (action === "delete-collection" && colId) {
+                const ok = confirm("이 컬렉션과 포함된 모든 페이지를 삭제하시겠습니까?");
+                if (!ok) return;
+                try {
+                    const res = await fetch("/api/collections/" + encodeURIComponent(colId), {
+                        method: "DELETE"
+                    });
+                    if (!res.ok) {
+                        throw new Error("HTTP " + res.status + " " + res.statusText);
+                    }
+                    collections = collections.filter((c) => c.id !== colId);
+                    pages = pages.filter((p) => p.collectionId !== colId);
+                    expandedCollections.delete(colId);
+
+                    if (currentCollectionId === colId) {
+                        currentCollectionId = collections[0]?.id || null;
+                        currentPageId = null;
+                    }
+
+                    renderPageList();
+                    if (currentCollectionId) {
+                        const first = pages.find((p) => p.collectionId === currentCollectionId);
+                        if (first) {
+                            await loadPage(first.id);
+                        } else if (editor) {
+                            editor.commands.setContent("<p>이 컬렉션에 페이지가 없습니다.</p>", {
+                                emitUpdate: false
+                            });
+                            const titleInput = document.querySelector("#page-title-input");
+                            if (titleInput) {
+                                titleInput.value = "";
+                            }
+                        }
+                    } else if (editor) {
+                        editor.commands.setContent("<p>컬렉션을 추가해 주세요.</p>", {
+                            emitUpdate: false
+                        });
+                        const titleInput = document.querySelector("#page-title-input");
+                        if (titleInput) {
+                            titleInput.value = "";
+                        }
+                    }
+                } catch (error) {
+                    console.error("컬렉션 삭제 오류:", error);
+                    alert("컬렉션을 삭제하지 못했습니다: " + error.message);
+                } finally {
+                    closeAllDropdowns();
+                }
+            }
+            return;
+        }
+
+        // 컬렉션에 페이지 추가
         const addBtn = event.target.closest(".collection-add-page-btn");
         if (addBtn) {
             const colId = addBtn.dataset.collectionId;
             if (!colId) {
                 return;
             }
+            expandedCollections.add(colId);
 
             const title = prompt("새 페이지 제목을 입력하세요.", "새 페이지");
             if (title === null) {
@@ -862,34 +1016,108 @@ function bindPageListClick() {
             } catch (error) {
                 console.error("컬렉션 내 페이지 생성 오류:", error);
                 alert("페이지를 생성하지 못했다: " + error.message);
+            } finally {
+                closeAllDropdowns();
             }
 
             return;
         }
 
-        const collectionHeader = event.target.closest(".collection-header");
-        if (collectionHeader) {
-            const container = collectionHeader.closest(".collection-item");
-            const colId = container ? container.dataset.collectionId : null;
-            if (colId && colId !== currentCollectionId) {
-                currentCollectionId = colId;
-                currentPageId = null;
-                renderPageList();
-
-                const first = pages.find((p) => p.collectionId === colId);
-                if (first) {
-                    await loadPage(first.id);
-                } else if (editor) {
-                    editor.commands.setContent("<p>이 컬렉션에 페이지가 없습니다.</p>", { emitUpdate: false });
-                    const titleInput = document.querySelector("#page-title-input");
-                    if (titleInput) {
-                        titleInput.value = "";
-                    }
+        // 페이지 메뉴 토글
+        const pageMenuBtn = event.target.closest(".page-menu-btn");
+        if (pageMenuBtn) {
+            const item = pageMenuBtn.closest(".page-list-item");
+            const menu = item ? item.querySelector(".page-menu") : null;
+            if (menu) {
+                closeAllDropdowns();
+                if (menu.classList.contains("hidden")) {
+                    openDropdown(menu, pageMenuBtn);
+                } else {
+                    closeAllDropdowns();
                 }
             }
             return;
         }
 
+        // 페이지 메뉴 액션
+        const pageMenuAction = event.target.closest(".page-menu button");
+        if (pageMenuAction) {
+            const action = pageMenuAction.dataset.action;
+            const pageId = pageMenuAction.dataset.pageId;
+            if (action === "delete-page" && pageId) {
+                const ok = confirm("이 페이지를 삭제하시겠습니까?");
+                if (!ok) return;
+                try {
+                    const res = await fetch("/api/pages/" + encodeURIComponent(pageId), {
+                        method: "DELETE"
+                    });
+                    if (!res.ok) {
+                        throw new Error("HTTP " + res.status + " " + res.statusText);
+                    }
+                    pages = pages.filter((p) => p.id !== pageId);
+                    if (currentPageId === pageId) {
+                        currentPageId = null;
+                    }
+                    renderPageList();
+                    // 삭제 후 현재 컬렉션에 페이지가 없으면 collapse 유지
+                    const hasPages = pages.some((p) => p.collectionId === currentCollectionId);
+                    if (!hasPages && currentCollectionId) {
+                        expandedCollections.delete(currentCollectionId);
+                    }
+                    if (currentCollectionId) {
+                        const first = pages.find((p) => p.collectionId === currentCollectionId);
+                        if (first) {
+                            await loadPage(first.id);
+                        } else if (editor) {
+                            editor.commands.setContent("<p>이 컬렉션에 페이지가 없습니다.</p>", {
+                                emitUpdate: false
+                            });
+                            const titleInput = document.querySelector("#page-title-input");
+                            if (titleInput) {
+                                titleInput.value = "";
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error("페이지 삭제 오류:", error);
+                    alert("페이지를 삭제하지 못했습니다: " + error.message);
+                } finally {
+                    closeAllDropdowns();
+                }
+            }
+            return;
+        }
+
+        // 컬렉션 선택
+        const collectionHeader = event.target.closest(".collection-header");
+        if (collectionHeader) {
+            const container = collectionHeader.closest(".collection-item");
+            const colId = container ? container.dataset.collectionId : null;
+            if (colId) {
+                if (expandedCollections.has(colId)) {
+                    expandedCollections.delete(colId); // collapse
+                } else {
+                    expandedCollections.add(colId); // expand
+                    currentCollectionId = colId;
+                    currentPageId = null;
+                    const first = pages.find((p) => p.collectionId === colId);
+                    if (first) {
+                        await loadPage(first.id);
+                    } else if (editor) {
+                        editor.commands.setContent("<p>이 컬렉션에 페이지가 없습니다.</p>", { emitUpdate: false });
+                        const titleInput = document.querySelector("#page-title-input");
+                        if (titleInput) {
+                            titleInput.value = "";
+                        }
+                    }
+                }
+                renderPageList();
+            }
+            closeAllDropdowns();
+            return;
+        }
+
+        // 페이지 선택
         const li = event.target.closest("li.page-list-item");
         if (!li) {
             return;
@@ -900,6 +1128,7 @@ function bindPageListClick() {
             return;
         }
 
+        closeAllDropdowns();
         await loadPage(pageId);
     });
 }
@@ -1019,69 +1248,6 @@ function bindSaveButton() {
     });
 }
 
-function bindDeleteButton() {
-    const btn = document.querySelector("#delete-page-btn");
-    if (!btn) {
-        return;
-    }
-
-    btn.addEventListener("click", async () => {
-        if (!currentPageId) {
-            alert("삭제할 페이지 없음.");
-            return;
-        }
-
-        const ok = confirm("정말 이 페이지를 삭제 하시겠습니까?");
-        if (!ok) {
-            return;
-        }
-
-        try {
-            const res = await fetch("/api/pages/" + encodeURIComponent(currentPageId), {
-                method: "DELETE"
-            });
-
-            if (!res.ok) {
-                throw new Error("HTTP " + res.status + " " + res.statusText);
-            }
-
-            const result = await res.json();
-            console.log("페이지 삭제 응답:", result);
-
-            // 삭제된 노트 및 자식 노트까지 반영되도록 전체 목록 새로 로딩
-            currentPageId = null;
-            await fetchPageList(); // 내부에서 renderPageList + 첫 페이지 로드 처리
-
-            if (!pages.length) {
-                const titleInput = document.querySelector("#page-title-input");
-                if (titleInput) {
-                    titleInput.value = "";
-                }
-                if (editor) {
-                    editor.commands.setContent("<p>새 페이지를 만들어보자.</p>", { emitUpdate: false });
-                }
-            }
-
-            renderPageList();
-
-            if (currentPageId) {
-                await loadPage(currentPageId);
-            } else {
-                const titleInput = document.querySelector("#page-title-input");
-                if (titleInput) {
-                    titleInput.value = "";
-                }
-                if (editor) {
-                    editor.commands.setContent("<p>새 페이지를 만들어보자.</p>", { emitUpdate: false });
-                }
-            }
-        } catch (error) {
-            console.error("페이지 삭제 오류:", error);
-            alert("페이지 삭제 실패: " + error.message);
-        }
-    });
-}
-
 function bindLogoutButton() {
     const btn = document.querySelector("#logout-btn");
     if (!btn) {
@@ -1141,6 +1307,15 @@ function initEvent() {
 		// 그 외 상황에서는 메뉴 닫기
 		closeSlashMenu();
 	});
+
+    document.addEventListener("click", (event) => {
+        const isMenuBtn = event.target.closest(".collection-menu-btn, .page-menu-btn");
+        const isMenu = event.target.closest(".dropdown-menu");
+        if (isMenuBtn || isMenu) {
+            return;
+        }
+        closeAllDropdowns();
+    });
 }
 
 function init() {
@@ -1150,7 +1325,6 @@ function init() {
     bindPageListClick();
     bindNewCollectionButton();
     bindSaveButton();
-    bindDeleteButton();
     bindSlashKeyHandlers();
 	bindLogoutButton();
     fetchCollections().then(() => fetchPageList());
