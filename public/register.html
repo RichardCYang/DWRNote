@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8" />
-    <title>DWRNote - 로그인</title>
+    <title>DWRNote - 회원가입</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- 아이콘 -->
     <link
@@ -21,23 +21,25 @@
         rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700&display=swap"
     />
+
+    <!-- 회원가입 전용 스타일 (login.css 재사용) -->
     <link rel="stylesheet" href="/css/login.css" />
 </head>
 <body class="login-body">
     <div class="login-shell">
-        <section class="login-card" aria-label="DWRNote 로그인">
+        <section class="login-card" aria-label="DWRNote 회원가입">
             <!-- 카드 상단 로고 + 서비스 이름 -->
             <header class="login-card-header">
                 <div class="login-logo-row">
                     <div class="login-logo-mark">D</div>
                     <span class="login-logo-name">DWRNote</span>
                 </div>
-                <h1 class="login-title">로그인</h1>
-                <p class="login-desc">DWRNote 계정으로 계속 진행합니다.</p>
+                <h1 class="login-title">회원가입</h1>
+                <p class="login-desc">새 DWRNote 계정을 만들어 보세요.</p>
             </header>
 
-            <!-- 로그인 폼 -->
-            <form id="login-form" class="login-form">
+            <!-- 회원가입 폼 -->
+            <form id="register-form" class="login-form">
                 <div class="login-field">
                     <label for="username">아이디</label>
                     <div class="login-input-row">
@@ -57,36 +59,44 @@
                             id="password"
                             name="password"
                             type="password"
-                            autocomplete="current-password"
+                            autocomplete="new-password"
                             required
                         />
                     </div>
                 </div>
 
-                <div class="login-meta">
-                    <label class="login-remember">
-                        <input type="checkbox" />
-                        <span>자동 로그인</span>
-                    </label>
-                    <button type="button" class="login-text-button">
-                        아이디 · 비밀번호 찾기
-                    </button>
+                <div class="login-field">
+                    <label for="passwordConfirm">비밀번호 확인</label>
+                    <div class="login-input-row">
+                        <input
+                            id="passwordConfirm"
+                            name="passwordConfirm"
+                            type="password"
+                            autocomplete="new-password"
+                            required
+                        />
+                    </div>
                 </div>
 
+                <!-- 힌트/에러 표시 -->
+                <p class="login-helper">
+                    비밀번호는 6자 이상을 권장합니다.
+                </p>
+
                 <button type="submit" class="login-submit">
-                    로그인
+                    회원가입
                 </button>
 
                 <!-- 에러 있을 때만 공간 차지 -->
-                <p id="login-error" class="login-error" aria-live="polite"></p>
+                <p id="register-error" class="login-error" aria-live="polite"></p>
 
                 <p class="login-sub-links">
-                    아직 계정이 없으신가요?
-                    <a href="/register" class="login-link">회원가입</a>
+                    이미 계정이 있으신가요?
+                    <a href="/login" class="login-link">로그인하기</a>
                 </p>
             </form>
 
-            <!-- 카드 하단 연한 회색 작은 설명 -->
+            <!-- 카드 하단 설명 (로그인 페이지와 동일) -->
             <div class="login-info-bottom">
                 <p class="login-info-title">오늘 기록, 내일 정리</p>
                 <p class="login-info-text">
@@ -99,6 +109,7 @@
             </div>
         </section>
     </div>
-    <script type="module" src="/js/login.js"></script>
+
+    <script type="module" src="/js/register.js"></script>
 </body>
 </html>

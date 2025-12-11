@@ -239,6 +239,7 @@ app.get("/", (req, res) => {
     return res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
+// 로그인 페이지
 app.get("/login", (req, res) => {
     const session = getSessionFromRequest(req);
 
@@ -247,6 +248,18 @@ app.get("/login", (req, res) => {
     }
 
     return res.sendFile(path.join(__dirname, "public", "login.html"));
+});
+
+// 회원가입 페이지
+app.get("/register", (req, res) => {
+    const session = getSessionFromRequest(req);
+
+    // 이미 로그인 되어 있으면 메인으로
+    if (session) {
+        return res.redirect("/");
+    }
+
+    return res.sendFile(path.join(__dirname, "public", "register.html"));
 });
 
 /**
@@ -336,6 +349,87 @@ app.post("/api/auth/logout", (req, res) => {
     });
 
     res.json({ ok: true });
+});
+
+/**
+ * 회원가입
+ * POST /api/auth/register
+ * body: { username: string, password: string }
+ */
+app.post("/api/auth/register", async (req, res) => {
+    const { username, password } = req.body || {};
+
+    if (typeof username !== "string" || typeof password !== "string") {
+        return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
+    }
+
+    const trimmedUsername = username.trim();
+
+    // 기본적인 유효성 검사
+    if (trimmedUsername.length < 3 || trimmedUsername.length > 64) {
+        return res.status(400).json({ error: "아이디는 3~64자 사이로 입력해 주세요." });
+    }
+
+    if (password.length < 6) {
+        return res.status(400).json({ error: "비밀번호는 6자 이상으로 입력해 주세요." });
+    }
+
+    try {
+        // 아이디 중복 확인
+        const [rows] = await pool.execute(
+            `
+            SELECT id
+            FROM users
+            WHERE username = ?
+            `,
+            [trimmedUsername]
+        );
+
+        if (rows.length > 0) {
+            return res.status(409).json({ error: "이미 사용 중인 아이디입니다." });
+        }
+
+        const now = new Date();
+        const nowStr = formatDateForDb(now);
+
+        // 비밀번호 해시
+        const passwordHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
+
+        // 새 유저 생성
+        const [result] = await pool.execute(
+            `
+            INSERT INTO users (username, password_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            `,
+            [trimmedUsername, passwordHash, nowStr, nowStr]
+        );
+
+        const user = {
+            id: result.insertId,
+            username: trimmedUsername
+        };
+
+        // 바로 로그인 상태로 만들어 주기 (세션 생성)
+        const sessionId = createSession(user);
+
+        res.cookie(SESSION_COOKIE_NAME, sessionId, {
+            httpOnly: true,
+            sameSite: "lax",
+            secure: process.env.NODE_ENV === "production",
+            maxAge: SESSION_TTL_MS
+        });
+
+        return res.status(201).json({
+            ok: true,
+            user: {
+                id: user.id,
+                username: user.username
+            }
+        });
+    } catch (error) {
+        console.error("POST /api/auth/register 오류:", error);
+        return res.status(500).json({ error: "회원가입 처리 중 오류가 발생했습니다." });
+    }
 });
 
 /**
