@@ -9,7 +9,7 @@
             rel="stylesheet"
             href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
         />
-        <link rel="stylesheet" href="/styles.css" />
+        <link rel="stylesheet" href="/css/main.css" />
     </head>
     <body>
         <div class="app">
@@ -17,6 +17,11 @@
                 <div class="app-header-left">
                     <span class="app-logo">📝</span>
                     <span class="app-title">DWRNote</span>
+                </div>
+                <div class="app-header-right">
+                    <button id="logout-btn" class="primary-button">
+                        로그아웃
+                    </button>
                 </div>
             </header>
             <div class="app-body">
@@ -212,7 +217,7 @@
         <!-- Tiptap 브라우저 번들 (전역 Tiptap 객체 제공) -->
         <script src="https://cdn.jsdelivr.net/gh/panphora/tiptap-for-browser@2.0.0-beta.166/tiptap-for-browser.min.js"></script>
 
-        <!-- 우리 앱 코드 (이제 import 안 씀, 전역 Tiptap 사용) -->
-        <script type="module" src="/app.js"></script>
+        <!-- 메인 코드 (import 안 씀, 전역 Tiptap 사용) -->
+        <script type="module" src="/js/app.js"></script>
     </body>
 </html>

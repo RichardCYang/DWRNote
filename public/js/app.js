@@ -849,6 +849,30 @@ function bindDeleteButton() {
     });
 }
 
+function bindLogoutButton() {
+    const btn = document.querySelector("#logout-btn");
+    if (!btn) {
+        return;
+    }
+
+    btn.addEventListener("click", async () => {
+        try {
+            const res = await fetch("/api/auth/logout", {
+                method: "POST"
+            });
+
+            if (!res.ok) {
+                throw new Error("HTTP " + res.status);
+            }
+
+            window.location.href = "/login";
+        } catch (error) {
+            console.error("로그아웃 실패:", error);
+            alert("로그아웃 중 오류가 발생했습니다.");
+        }
+    });
+}
+
 function initEvent() {
     document.addEventListener("click", (event) => {
     	// 글자 색상 선택 드롭다운 메뉴 바깥을 클릭하면 드롭다운 닫기 구현
@@ -895,6 +919,7 @@ function init() {
     bindSaveButton();
     bindDeleteButton();
     bindSlashKeyHandlers();
+	bindLogoutButton();
     fetchPageList();
 }
 

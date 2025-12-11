@@ -61,7 +61,6 @@ body {
 }
 
 /* 사이드바 */
-
 .sidebar {
     width: 260px;
     border-right: 1px solid #e5e7eb;
@@ -276,7 +275,6 @@ body {
 }
 
 /* 에디터 블록(문단)을 노션의 블록처럼 보이게 하는 스타일 */
-
 .editor .ProseMirror {
     outline: none;
     padding: 12px 14px;
@@ -331,7 +329,6 @@ body {
 }
 
 /* 슬래시(/) 명령 블록 선택 메뉴 스타일 */
-
 #slash-menu {
     position: fixed;
     z-index: 50;
@@ -424,7 +421,7 @@ body {
 }
 
 .sidebar-new-page-button:hover {
-    background-color: #e0e7ff;   /* 아주 은은한 파란기 도는 회색 */
+    background-color: #e0e7ff;
 }
 
 /* 반응형 간단 대응 */

@@ -1,9 +1,21 @@
 const express = require("express");
 const path = require("path");
 const mysql = require("mysql2/promise");
+const bcrypt = require("bcrypt");
+const cookieParser = require("cookie-parser");
+const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// 세션 / 인증 관련 설정
+const SESSION_COOKIE_NAME = "dwrnote_session";
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일
+
+// 기본 관리자 계정 (최초 1번만 생성)
+const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
+const BCRYPT_SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || 12);
 
 /**
  * DB 연결 설정 정보
@@ -20,6 +32,7 @@ const DB_CONFIG = {
 };
 
 let pool;
+const sessions = new Map();
 
 /**
  * Date -> MySQL DATETIME 문자열 (YYYY-MM-DD HH:MM:SS)
@@ -66,13 +79,108 @@ function toIsoString(value) {
 }
 
 /**
- * DB 초기화: 커넥션 풀 생성 + 테이블/기본 페이지 보장
+ * 세션 생성
+ */
+function createSession(user) {
+    const sessionId = crypto.randomBytes(24).toString("hex");
+    const expiresAt = Date.now() + SESSION_TTL_MS;
+
+    sessions.set(sessionId, {
+        userId: user.id,
+        username: user.username,
+        expiresAt
+    });
+
+    return sessionId;
+}
+
+/**
+ * 요청에서 세션 읽기
+ */
+function getSessionFromRequest(req) {
+    if (!req.cookies) {
+        return null;
+    }
+
+    const sessionId = req.cookies[SESSION_COOKIE_NAME];
+    if (!sessionId) {
+        return null;
+    }
+
+    const session = sessions.get(sessionId);
+    if (!session) {
+        return null;
+    }
+
+    if (session.expiresAt <= Date.now()) {
+        sessions.delete(sessionId);
+        return null;
+    }
+
+    return { id: sessionId, ...session };
+}
+
+/**
+ * 인증이 필요한 API용 미들웨어
+ */
+function authMiddleware(req, res, next) {
+    const session = getSessionFromRequest(req);
+
+    if (!session) {
+        return res.status(401).json({ error: "로그인이 필요합니다." });
+    }
+
+    req.user = {
+        id: session.userId,
+        username: session.username
+    };
+
+    next();
+}
+
+/**
+ * DB 초기화: 커넥션 풀 생성 + 테이블/기본 페이지 생성 + 사용자 정보 테이블 생성
  */
 async function initDb() {
     pool = await mysql.createPool(DB_CONFIG);
 
-    console.log("DB 커넥션 풀 생성 완료.");
+    // users 테이블 생성
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS users (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(64) NOT NULL UNIQUE,
+            password_hash VARCHAR(255) NOT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL
+        )
+    `);
 
+    // users 가 하나도 없으면 기본 관리자 계정 생성
+    const [userRows] = await pool.execute("SELECT COUNT(*) AS cnt FROM users");
+    const userCount = userRows[0].cnt;
+
+    if (userCount === 0) {
+        const now = new Date();
+        const nowStr = formatDateForDb(now);
+
+        const username = DEFAULT_ADMIN_USERNAME;
+        const rawPassword = DEFAULT_ADMIN_PASSWORD;
+
+        // bcrypt 가 내부적으로 랜덤 SALT 를 포함한 해시를 생성함
+        const passwordHash = await bcrypt.hash(rawPassword, BCRYPT_SALT_ROUNDS);
+
+        await pool.execute(
+            `
+            INSERT INTO users (username, password_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            `,
+            [username, passwordHash, nowStr, nowStr]
+        );
+
+        console.log("기본 관리자 계정 생성 완료. username:", username);
+    }
+
+    // pages 테이블 생성
     await pool.execute(`
         CREATE TABLE IF NOT EXISTS pages (
             id          VARCHAR(64)  NOT NULL PRIMARY KEY,
@@ -83,11 +191,9 @@ async function initDb() {
         )
     `);
 
-    console.log("pages 테이블 확인/생성 완료.");
-
+    // 기본 페이지 1개 보장
     const [rows] = await pool.execute("SELECT COUNT(*) AS cnt FROM pages");
     const count = rows[0].cnt;
-    console.log("현재 pages 개수:", count);
 
     if (count === 0) {
         const now = new Date();
@@ -117,7 +223,31 @@ async function initDb() {
  * 미들웨어 설정
  */
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+app.use(cookieParser());
+app.use(express.static(path.join(__dirname, "public"), { index: false }));
+
+/**
+ * 로그인 / 메인 화면 라우팅
+ */
+app.get("/", (req, res) => {
+    const session = getSessionFromRequest(req);
+
+    if (!session) {
+        return res.redirect("/login");
+    }
+
+    return res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+app.get("/login", (req, res) => {
+    const session = getSessionFromRequest(req);
+
+    if (session) {
+        return res.redirect("/");
+    }
+
+    return res.sendFile(path.join(__dirname, "public", "login.html"));
+});
 
 /**
  * 간단한 헬스 체크용
@@ -131,10 +261,99 @@ app.get("/api/debug/ping", (req, res) => {
 });
 
 /**
+ * 로그인
+ * POST /api/auth/login
+ * body: { username: string, password: string }
+ */
+app.post("/api/auth/login", async (req, res) => {
+    const { username, password } = req.body || {};
+
+    if (typeof username !== "string" || typeof password !== "string") {
+        return res.status(400).json({ error: "아이디와 비밀번호를 모두 입력해 주세요." });
+    }
+
+    const trimmedUsername = username.trim();
+
+    try {
+        const [rows] = await pool.execute(
+            `
+            SELECT id, username, password_hash
+            FROM users
+            WHERE username = ?
+            `,
+            [trimmedUsername]
+        );
+
+        if (!rows.length) {
+            console.warn("로그인 실패 - 존재하지 않는 사용자:", trimmedUsername);
+            return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
+        }
+
+        const user = rows[0];
+
+        const ok = await bcrypt.compare(password, user.password_hash);
+        if (!ok) {
+            console.warn("로그인 실패 - 비밀번호 불일치:", trimmedUsername);
+            return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
+        }
+
+        const sessionId = createSession(user);
+
+        res.cookie(SESSION_COOKIE_NAME, sessionId, {
+            httpOnly: true,
+            sameSite: "lax",
+            secure: process.env.NODE_ENV === "production",
+            maxAge: SESSION_TTL_MS
+        });
+
+        res.json({
+            ok: true,
+            user: {
+                id: user.id,
+                username: user.username
+            }
+        });
+    } catch (error) {
+        console.error("POST /api/auth/login 오류:", error);
+        res.status(500).json({ error: "로그인 처리 중 오류가 발생했습니다." });
+    }
+});
+
+/**
+ * 로그아웃
+ * POST /api/auth/logout
+ */
+app.post("/api/auth/logout", (req, res) => {
+    const session = getSessionFromRequest(req);
+    if (session) {
+        sessions.delete(session.id);
+    }
+
+    res.clearCookie(SESSION_COOKIE_NAME, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production"
+    });
+
+    res.json({ ok: true });
+});
+
+/**
+ * 현재 로그인한 사용자 정보 확인
+ * GET /api/auth/me
+ */
+app.get("/api/auth/me", authMiddleware, (req, res) => {
+    res.json({
+        id: req.user.id,
+        username: req.user.username
+    });
+});
+
+/**
  * 페이지 목록 조회
  * GET /api/pages
  */
-app.get("/api/pages", async (req, res) => {
+app.get("/api/pages", authMiddleware, async (req, res) => {
     try {
         const [rows] = await pool.execute(
             `
@@ -163,7 +382,7 @@ app.get("/api/pages", async (req, res) => {
  * 단일 페이지 조회
  * GET /api/pages/:id
  */
-app.get("/api/pages/:id", async (req, res) => {
+app.get("/api/pages/:id", authMiddleware, async (req, res) => {
     const id = req.params.id;
 
     try {
@@ -205,7 +424,7 @@ app.get("/api/pages/:id", async (req, res) => {
  * POST /api/pages
  * body: { title?: string }
  */
-app.post("/api/pages", async (req, res) => {
+app.post("/api/pages", authMiddleware, async (req, res) => {
     const rawTitle = typeof req.body.title === "string" ? req.body.title : "";
     const title = rawTitle.trim() !== "" ? rawTitle.trim() : "제목 없음";
 
@@ -245,7 +464,7 @@ app.post("/api/pages", async (req, res) => {
  * PUT /api/pages/:id
  * body: { title?: string, content?: string }
  */
-app.put("/api/pages/:id", async (req, res) => {
+app.put("/api/pages/:id", authMiddleware, async (req, res) => {
     const id = req.params.id;
 
     const titleFromBody = typeof req.body.title === "string" ? req.body.title.trim() : null;
@@ -307,7 +526,7 @@ app.put("/api/pages/:id", async (req, res) => {
  * 페이지 삭제
  * DELETE /api/pages/:id
  */
-app.delete("/api/pages/:id", async (req, res) => {
+app.delete("/api/pages/:id", authMiddleware, async (req, res) => {
     const id = req.params.id;
 
     try {
