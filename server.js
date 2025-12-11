@@ -184,14 +184,20 @@ async function initDb() {
     await pool.execute(`
     	CREATE TABLE IF NOT EXISTS pages (
             id          VARCHAR(64)  NOT NULL PRIMARY KEY,
+            sort_order  INT          NOT NULL DEFAULT 0,
             user_id     INT          NOT NULL,
             title       VARCHAR(255) NOT NULL,
             content     MEDIUMTEXT   NOT NULL,
             created_at  DATETIME     NOT NULL,
             updated_at  DATETIME     NOT NULL,
+            parent_id   VARCHAR(64)  NULL,
             CONSTRAINT fk_pages_user
                 FOREIGN KEY (user_id)
                 REFERENCES users(id)
+                ON DELETE CASCADE,
+            CONSTRAINT fk_pages_parent
+                FOREIGN KEY (parent_id)
+                REFERENCES pages(id)
                 ON DELETE CASCADE
         )
     `);
@@ -430,10 +436,10 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
 		const userId = req.user.id;
         const [rows] = await pool.execute(
             `
-            SELECT id, title, updated_at
+            SELECT id, title, updated_at, parent_id, sort_order
             FROM pages
             WHERE user_id = ?
-            ORDER BY updated_at DESC
+            ORDER BY parent_id IS NULL DESC, sort_order ASC, updated_at DESC
             `,
             [userId]
         );
@@ -441,7 +447,9 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
         const list = rows.map((row) => ({
             id: row.id,
             title: row.title || "제목 없음",
-            updatedAt: toIsoString(row.updated_at)
+            updatedAt: toIsoString(row.updated_at),
+            parentId: row.parent_id,
+            sortOrder: row.sort_order
         }));
 
         console.log("GET /api/pages 응답 개수:", list.length);
@@ -464,7 +472,7 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
     try {
         const [rows] = await pool.execute(
             `
-            SELECT id, title, content, created_at, updated_at
+            SELECT id, title, content, created_at, updated_at, parent_id, sort_order
             FROM pages
             WHERE id = ? AND user_id = ?
             `,
@@ -483,7 +491,9 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
             title: row.title || "제목 없음",
             content: row.content || "<p></p>",
             createdAt: toIsoString(row.created_at),
-            updatedAt: toIsoString(row.updated_at)
+            updatedAt: toIsoString(row.updated_at),
+            parentId: row.parent_id,
+            sortOrder: row.sort_order
         };
 
         console.log("GET /api/pages/:id 응답:", id);
@@ -510,19 +520,31 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
     const content = "<p></p>";
 	const userId = req.user.id;
 
+	// body에서 parentId / sortOrder 받기 (없으면 루트 + sort_order 0)
+    const parentId =
+        typeof req.body.parentId === "string" && req.body.parentId.trim() !== ""
+            ? req.body.parentId.trim()
+            : null;
+    const sortOrder =
+        typeof req.body.sortOrder === "number" && Number.isFinite(req.body.sortOrder)
+            ? req.body.sortOrder
+            : 0;
+
     try {
         await pool.execute(
             `
-            INSERT INTO pages (id, user_id, title, content, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO pages (id, user_id, parent_id, title, content, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `,
-            [id, userId, title, content, nowStr, nowStr]
+            [id, userId, parentId, title, content, sortOrder, nowStr, nowStr]
         );
 
         const page = {
             id,
             title,
             content,
+            parentId,
+            sortOrder,
             createdAt: now.toISOString(),
             updatedAt: now.toISOString()
         };
@@ -555,7 +577,7 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
     try {
         const [rows] = await pool.execute(
             `
-            SELECT id, title, content, created_at, updated_at
+            SELECT id, title, content, created_at, updated_at, parent_id, sort_order
             FROM pages
             WHERE id = ? AND user_id = ?
             `,
@@ -587,6 +609,8 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
             id,
             title: newTitle,
             content: newContent,
+            parentId: existing.parent_id,
+            sortOrder: existing.sort_order,
             createdAt: toIsoString(existing.created_at),
             updatedAt: now.toISOString()
         };

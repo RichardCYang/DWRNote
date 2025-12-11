@@ -591,6 +591,54 @@ async function fetchPageList() {
     }
 }
 
+function buildPageTree(flatPages) {
+    const map = new Map();
+
+    flatPages.forEach((p) => {
+        map.set(p.id, {
+            ...p,
+            parentId: p.parentId || null,
+            sortOrder:
+                typeof p.sortOrder === "number" ? p.sortOrder : 0,
+            children: []
+        });
+    });
+
+    const roots = [];
+
+    map.forEach((node) => {
+        if (node.parentId && map.has(node.parentId)) {
+            const parent = map.get(node.parentId);
+            parent.children.push(node);
+        } else {
+            roots.push(node);
+        }
+    });
+
+    const sortFn = (a, b) => {
+        const aOrder = typeof a.sortOrder === "number" ? a.sortOrder : 0;
+        const bOrder = typeof b.sortOrder === "number" ? b.sortOrder : 0;
+        if (aOrder !== bOrder) {
+            return aOrder - bOrder;
+        }
+        const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return bTime - aTime; // 최신순
+    };
+
+    function sortNodes(nodes) {
+        nodes.sort(sortFn);
+        nodes.forEach((n) => {
+            if (n.children && n.children.length) {
+                sortNodes(n.children);
+            }
+        });
+    }
+
+    sortNodes(roots);
+    return roots;
+}
+
 function renderPageList() {
     const listEl = document.querySelector("#page-list");
     if (!listEl) {
@@ -599,30 +647,41 @@ function renderPageList() {
 
     listEl.innerHTML = "";
 
-    pages.forEach((page) => {
+    const tree = buildPageTree(pages);
+
+    function renderNode(node, depth) {
         const li = document.createElement("li");
         li.className = "page-list-item";
-        li.dataset.pageId = page.id;
+        li.dataset.pageId = node.id;
+
+        // 깊이에 따른 들여쓰기
+        li.style.paddingLeft = 14 + depth * 16 + "px";
 
         const titleSpan = document.createElement("span");
         titleSpan.className = "page-list-item-title";
-        titleSpan.textContent = page.title || "제목 없음";
+        titleSpan.textContent = node.title || "제목 없음";
 
         const dateSpan = document.createElement("span");
         dateSpan.className = "page-list-item-date";
-        dateSpan.textContent = page.updatedAt
-            ? new Date(page.updatedAt).toLocaleString()
+        dateSpan.textContent = node.updatedAt
+            ? new Date(node.updatedAt).toLocaleString()
             : "";
 
         li.appendChild(titleSpan);
         li.appendChild(dateSpan);
 
-        if (page.id === currentPageId) {
+        if (node.id === currentPageId) {
             li.classList.add("active");
         }
 
         listEl.appendChild(li);
-    });
+
+        if (node.children && node.children.length) {
+            node.children.forEach((child) => renderNode(child, depth + 1));
+        }
+    }
+
+    tree.forEach((node) => renderNode(node, 0));
 }
 
 async function loadPage(id) {
@@ -690,13 +749,14 @@ function bindNewPageButton() {
             const titleInput = document.querySelector("#page-title-input");
             const rawTitle = titleInput ? titleInput.value : "";
             const title = rawTitle && rawTitle.trim() !== "" ? rawTitle.trim() : "새 페이지";
+            const parentId = currentPageId || null;
 
             const res = await fetch("/api/pages", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
                 },
-                body: JSON.stringify({ title })
+                body: JSON.stringify({ title, parentId })
             });
 
             if (!res.ok) {
@@ -709,8 +769,11 @@ function bindNewPageButton() {
             pages.unshift({
                 id: page.id,
                 title: page.title,
-                updatedAt: page.updatedAt
+                updatedAt: page.updatedAt,
+                parentId: page.parentId || null,
+				sortOrder: typeof page.sortOrder === "number" ? page.sortOrder : 0
             });
+
             currentPageId = page.id;
             renderPageList();
 
@@ -771,10 +834,15 @@ function bindSaveButton() {
 
             pages = pages.map((p) => {
                 if (p.id === page.id) {
-                    return {
-                        id: page.id,
+                	return {
+                        ...p,
                         title: page.title,
-                        updatedAt: page.updatedAt
+                        updatedAt: page.updatedAt,
+                        parentId: page.parentId ?? p.parentId ?? null,
+                        sortOrder:
+                            typeof page.sortOrder === "number"
+                                ? page.sortOrder
+                                : (typeof p.sortOrder === "number" ? p.sortOrder : 0)
                     };
                 }
                 return p;
@@ -826,8 +894,19 @@ function bindDeleteButton() {
             const result = await res.json();
             console.log("페이지 삭제 응답:", result);
 
-            pages = pages.filter((p) => p.id !== currentPageId);
-            currentPageId = pages.length ? pages[0].id : null;
+            // 삭제된 노트 및 자식 노트까지 반영되도록 전체 목록 새로 로딩
+            currentPageId = null;
+            await fetchPageList(); // 내부에서 renderPageList + 첫 페이지 로드 처리
+
+            if (!pages.length) {
+                const titleInput = document.querySelector("#page-title-input");
+                if (titleInput) {
+                    titleInput.value = "";
+                }
+                if (editor) {
+                    editor.commands.setContent("<p>새 페이지를 만들어보자.</p>", { emitUpdate: false });
+                }
+            }
 
             renderPageList();
 
