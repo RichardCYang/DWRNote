@@ -159,10 +159,24 @@ async function initDb() {
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             username VARCHAR(64) NOT NULL UNIQUE,
             password_hash VARCHAR(255) NOT NULL,
+            encryption_salt VARCHAR(255) NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL
         )
     `);
+
+    // 기존 users 테이블에 encryption_salt 컬럼 추가 (없을 경우에만)
+    try {
+        await pool.execute(`
+            ALTER TABLE users ADD COLUMN encryption_salt VARCHAR(255) NULL
+        `);
+        console.log("users 테이블에 encryption_salt 컬럼 추가 완료");
+    } catch (error) {
+        // 이미 컬럼이 존재하는 경우 무시
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("encryption_salt 컬럼 추가 중 경고:", error.message);
+        }
+    }
 
     // users 가 하나도 없으면 기본 관리자 계정 생성
     const [userRows] = await pool.execute("SELECT COUNT(*) AS cnt FROM users");
@@ -246,6 +260,18 @@ async function initDb() {
         // 이미 존재하는 경우 무시
         if (error && error.code !== "ER_DUP_KEY" && error.code !== "ER_CANNOT_ADD_FOREIGN") {
             console.warn("pages.collection_id FK 추가 중 경고:", error.message);
+        }
+    }
+
+    // 보안 개선: is_encrypted 플래그 추가 (기본값 0 - 암호화 안 됨)
+    try {
+        await pool.execute(`
+            ALTER TABLE pages ADD COLUMN is_encrypted TINYINT(1) NOT NULL DEFAULT 0
+        `);
+        console.log("pages 테이블에 is_encrypted 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("pages.is_encrypted 컬럼 추가 중 경고:", error.message);
         }
     }
 
@@ -339,6 +365,18 @@ async function createCollection({ userId, name }) {
  */
 app.use(express.json());
 app.use(cookieParser());
+
+// 보안 개선: 기본 보안 헤더 추가 (CSP는 제외 - 개발 중 문제 발생 가능)
+app.use((req, res, next) => {
+    // 추가 보안 헤더
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+    next();
+});
+
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 
 /**
@@ -410,7 +448,7 @@ app.post("/api/auth/login", async (req, res) => {
     try {
         const [rows] = await pool.execute(
             `
-            SELECT id, username, password_hash
+            SELECT id, username, password_hash, encryption_salt
             FROM users
             WHERE username = ?
             `,
@@ -444,7 +482,8 @@ app.post("/api/auth/login", async (req, res) => {
             user: {
                 id: user.id,
                 username: user.username
-            }
+            },
+            encryptionSalt: user.encryption_salt
         });
     } catch (error) {
         console.error("POST /api/auth/login 오류:", error);
@@ -562,11 +601,90 @@ app.post("/api/auth/register", async (req, res) => {
  * 현재 로그인한 사용자 정보 확인
  * GET /api/auth/me
  */
-app.get("/api/auth/me", authMiddleware, (req, res) => {
-    res.json({
-        id: req.user.id,
-        username: req.user.username
-    });
+app.get("/api/auth/me", authMiddleware, async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            `SELECT id, username, encryption_salt FROM users WHERE id = ?`,
+            [req.user.id]
+        );
+
+        if (!rows.length) {
+            return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+        }
+
+        const user = rows[0];
+        res.json({
+            id: user.id,
+            username: user.username,
+            encryptionSalt: user.encryption_salt
+        });
+    } catch (error) {
+        console.error("GET /api/auth/me 오류:", error);
+        res.status(500).json({ error: "사용자 정보 조회 중 오류가 발생했습니다." });
+    }
+});
+
+/**
+ * 암호화 Salt 업데이트
+ * PUT /api/auth/encryption-salt
+ */
+app.put("/api/auth/encryption-salt", authMiddleware, async (req, res) => {
+    const { encryptionSalt } = req.body;
+
+    if (typeof encryptionSalt !== "string" || !encryptionSalt) {
+        return res.status(400).json({ error: "암호화 Salt가 필요합니다." });
+    }
+
+    try {
+        await pool.execute(
+            `UPDATE users SET encryption_salt = ? WHERE id = ?`,
+            [encryptionSalt, req.user.id]
+        );
+
+        res.json({ ok: true });
+    } catch (error) {
+        console.error("PUT /api/auth/encryption-salt 오류:", error);
+        res.status(500).json({ error: "암호화 Salt 업데이트 중 오류가 발생했습니다." });
+    }
+});
+
+/**
+ * 비밀번호 재확인 (보안 강화)
+ * POST /api/auth/verify-password
+ */
+app.post("/api/auth/verify-password", authMiddleware, async (req, res) => {
+    const { password } = req.body || {};
+
+    if (typeof password !== "string") {
+        return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
+    }
+
+    try {
+        const [rows] = await pool.execute(
+            `SELECT id, username, password_hash, encryption_salt FROM users WHERE id = ?`,
+            [req.user.id]
+        );
+
+        if (!rows.length) {
+            return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+        }
+
+        const user = rows[0];
+
+        const ok = await bcrypt.compare(password, user.password_hash);
+        if (!ok) {
+            console.warn("비밀번호 재확인 실패:", req.user.username);
+            return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
+        }
+
+        res.json({
+            ok: true,
+            encryptionSalt: user.encryption_salt
+        });
+    } catch (error) {
+        console.error("POST /api/auth/verify-password 오류:", error);
+        res.status(500).json({ error: "비밀번호 확인 중 오류가 발생했습니다." });
+    }
 });
 
 /**
@@ -671,7 +789,7 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
                 : null;
 
         let query = `
-            SELECT id, title, updated_at, parent_id, sort_order, collection_id
+            SELECT id, title, updated_at, parent_id, sort_order, collection_id, is_encrypted
             FROM pages
             WHERE user_id = ?
         `;
@@ -694,7 +812,8 @@ app.get("/api/pages", authMiddleware, async (req, res) => {
             updatedAt: toIsoString(row.updated_at),
             parentId: row.parent_id,
             sortOrder: row.sort_order,
-            collectionId: row.collection_id
+            collectionId: row.collection_id,
+            isEncrypted: row.is_encrypted ? true : false
         }));
 
         console.log("GET /api/pages 응답 개수:", list.length);
@@ -717,7 +836,7 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
     try {
         const [rows] = await pool.execute(
             `
-            SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id
+            SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted
             FROM pages
             WHERE id = ? AND user_id = ?
             `,
@@ -739,7 +858,8 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
             updatedAt: toIsoString(row.updated_at),
             parentId: row.parent_id,
             sortOrder: row.sort_order,
-            collectionId: row.collection_id
+            collectionId: row.collection_id,
+            isEncrypted: row.is_encrypted ? true : false
         };
 
         console.log("GET /api/pages/:id 응답:", id);
@@ -763,7 +883,8 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
     const now = new Date();
     const id = generatePageId(now);
     const nowStr = formatDateForDb(now);
-    const content = "<p></p>";
+    // 클라이언트에서 content를 전달하면 사용, 아니면 기본값
+    const content = typeof req.body.content === "string" ? req.body.content : "<p></p>";
 	const userId = req.user.id;
 
 	// body에서 parentId / sortOrder 받기 (없으면 루트 + sort_order 0)
@@ -855,15 +976,16 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
 
     const titleFromBody = typeof req.body.title === "string" ? req.body.title.trim() : null;
     const contentFromBody = typeof req.body.content === "string" ? req.body.content : null;
+    const isEncryptedFromBody = typeof req.body.isEncrypted === "boolean" ? req.body.isEncrypted : null;
 
-    if (!titleFromBody && !contentFromBody) {
+    if (!titleFromBody && !contentFromBody && isEncryptedFromBody === null) {
         return res.status(400).json({ error: "수정할 데이터 없음." });
     }
 
     try {
         const [rows] = await pool.execute(
             `
-            SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id
+            SELECT id, title, content, created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted
             FROM pages
             WHERE id = ? AND user_id = ?
             `,
@@ -879,16 +1001,17 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
 
         const newTitle = titleFromBody && titleFromBody !== "" ? titleFromBody : existing.title;
         const newContent = contentFromBody !== null ? contentFromBody : existing.content;
+        const newIsEncrypted = isEncryptedFromBody !== null ? (isEncryptedFromBody ? 1 : 0) : existing.is_encrypted;
         const now = new Date();
         const nowStr = formatDateForDb(now);
 
         await pool.execute(
             `
             UPDATE pages
-            SET title = ?, content = ?, updated_at = ?
+            SET title = ?, content = ?, is_encrypted = ?, updated_at = ?
             WHERE id = ? AND user_id = ?
             `,
-            [newTitle, newContent, nowStr, id, userId]
+            [newTitle, newContent, newIsEncrypted, nowStr, id, userId]
         );
 
         const page = {

@@ -606,14 +606,11 @@ async function fetchPageList() {
         console.log("페이지 목록 응답:", data);
 
         pages = Array.isArray(data) ? data : [];
+
         renderPageList();
 
-        const firstInCollection = pages.find((p) => p.collectionId === currentCollectionId);
-
-        if (firstInCollection && !currentPageId) {
-            currentPageId = firstInCollection.id;
-            await loadPage(currentPageId);
-        } else if (!pages.length) {
+        // 페이지가 없으면 안내 메시지만 표시
+        if (!pages.length) {
             if (editor) {
                 editor.commands.setContent("<p>새 페이지를 만들어보자.</p>", { emitUpdate: false });
             }
@@ -796,7 +793,13 @@ function renderPageList() {
 
                     const titleSpan = document.createElement("span");
                     titleSpan.className = "page-list-item-title";
-                    titleSpan.textContent = node.title || "제목 없음";
+
+                    // 암호화된 페이지는 자물쇠 아이콘 표시
+                    if (node.isEncrypted) {
+                        titleSpan.innerHTML = `<i class="fa-solid fa-lock" style="margin-right: 6px; color: #2d5f5d;"></i>${node.title || "제목 없음"}`;
+                    } else {
+                        titleSpan.textContent = node.title || "제목 없음";
+                    }
 
                     const dateSpan = document.createElement("span");
                     dateSpan.className = "page-list-item-date";
@@ -816,12 +819,27 @@ function renderPageList() {
 
                     const pageMenu = document.createElement("div");
                     pageMenu.className = "dropdown-menu page-menu hidden";
-                    pageMenu.innerHTML = `
-                        <button data-action="delete-page" data-page-id="${node.id}">
-                            <i class="fa-regular fa-trash-can"></i>
-                            페이지 삭제
-                        </button>
-                    `;
+
+                    // 암호화된 페이지는 암호화 버튼 제거
+                    if (node.isEncrypted) {
+                        pageMenu.innerHTML = `
+                            <button data-action="delete-page" data-page-id="${node.id}">
+                                <i class="fa-regular fa-trash-can"></i>
+                                페이지 삭제
+                            </button>
+                        `;
+                    } else {
+                        pageMenu.innerHTML = `
+                            <button data-action="encrypt-page" data-page-id="${node.id}">
+                                <i class="fa-solid fa-lock"></i>
+                                페이지 암호화
+                            </button>
+                            <button data-action="delete-page" data-page-id="${node.id}">
+                                <i class="fa-regular fa-trash-can"></i>
+                                페이지 삭제
+                            </button>
+                        `;
+                    }
 
                     const right = document.createElement("div");
                     right.className = "page-menu-wrapper";
@@ -899,19 +917,34 @@ async function loadPage(id) {
         const page = await res.json();
         console.log("단일 페이지 응답:", page);
 
+        // 암호화된 페이지인 경우 복호화 비밀번호 입력 요청
+        if (page.isEncrypted) {
+            // 암호화된 페이지는 currentPageId를 설정하지 않음
+            // 복호화 성공 시 decryptAndLoadPage에서 설정
+            if (page.collectionId) {
+                currentCollectionId = page.collectionId;
+                expandedCollections.add(page.collectionId);
+            }
+            showDecryptionModal(page);
+            return;
+        }
+
         currentPageId = page.id;
         if (page.collectionId) {
             currentCollectionId = page.collectionId;
             expandedCollections.add(page.collectionId);
         }
 
+        let title = page.title || "";
+        let content = page.content || "<p></p>";
+
         const titleInput = document.querySelector("#page-title-input");
         if (titleInput) {
-            titleInput.value = page.title || "";
+            titleInput.value = title;
         }
 
         if (editor) {
-            editor.commands.setContent(page.content || "<p></p>", { emitUpdate: false });
+            editor.commands.setContent(content, { emitUpdate: false });
         }
 
         renderPageList();
@@ -994,28 +1027,28 @@ function bindPageListClick() {
                     }
 
                     renderPageList();
-                    if (currentCollectionId) {
-                        const first = pages.find((p) => p.collectionId === currentCollectionId);
-                        if (first) {
-                            await loadPage(first.id);
-                        } else if (editor) {
+
+                    // 에디터 초기화
+                    if (editor) {
+                        if (currentCollectionId && pages.find((p) => p.collectionId === currentCollectionId)) {
+                            editor.commands.setContent("<p>페이지를 선택하세요.</p>", {
+                                emitUpdate: false
+                            });
+                        } else if (currentCollectionId) {
                             editor.commands.setContent("<p>이 컬렉션에 페이지가 없습니다.</p>", {
                                 emitUpdate: false
                             });
-                            const titleInput = document.querySelector("#page-title-input");
-                            if (titleInput) {
-                                titleInput.value = "";
-                            }
+                        } else {
+                            editor.commands.setContent("<p>컬렉션을 추가해 주세요.</p>", {
+                                emitUpdate: false
+                            });
                         }
-                    } else if (editor) {
-                        editor.commands.setContent("<p>컬렉션을 추가해 주세요.</p>", {
-                            emitUpdate: false
-                        });
                         const titleInput = document.querySelector("#page-title-input");
                         if (titleInput) {
                             titleInput.value = "";
                         }
                     }
+                    currentPageId = null;
                 } catch (error) {
                     console.error("컬렉션 삭제 오류:", error);
                     alert("컬렉션을 삭제하지 못했습니다: " + error.message);
@@ -1035,10 +1068,13 @@ function bindPageListClick() {
             }
             expandedCollections.add(colId);
 
-            const title = prompt("새 페이지 제목을 입력하세요.", "새 페이지");
+            let title = prompt("새 페이지 제목을 입력하세요.", "새 페이지");
             if (title === null) {
                 return;
             }
+
+            const plainTitle = title.trim() || "새 페이지";
+            const plainContent = "<p></p>";
 
             try {
                 const res = await fetch("/api/pages", {
@@ -1047,7 +1083,8 @@ function bindPageListClick() {
                         "Content-Type": "application/json"
                     },
                     body: JSON.stringify({
-                        title: title.trim() || "새 페이지",
+                        title: plainTitle,
+                        content: plainContent,
                         parentId: null,
                         collectionId: colId
                     })
@@ -1060,7 +1097,7 @@ function bindPageListClick() {
                 const page = await res.json();
                 pages.unshift({
                     id: page.id,
-                    title: page.title,
+                    title: plainTitle, // 복호화된 제목 저장
                     updatedAt: page.updatedAt,
                     parentId: page.parentId || null,
                     collectionId: page.collectionId || colId,
@@ -1102,6 +1139,12 @@ function bindPageListClick() {
         if (pageMenuAction) {
             const action = pageMenuAction.dataset.action;
             const pageId = pageMenuAction.dataset.pageId;
+            if (action === "encrypt-page" && pageId) {
+                // 페이지 암호화
+                showEncryptionModal(pageId);
+                closeAllDropdowns();
+                return;
+            }
             if (action === "delete-page" && pageId) {
                 const ok = confirm("이 페이지를 삭제하시겠습니까?");
                 if (!ok) return;
@@ -1157,17 +1200,6 @@ function bindPageListClick() {
                 } else {
                     expandedCollections.add(colId); // expand
                     currentCollectionId = colId;
-                    currentPageId = null;
-                    const first = pages.find((p) => p.collectionId === colId);
-                    if (first) {
-                        await loadPage(first.id);
-                    } else if (editor) {
-                        editor.commands.setContent("<p>이 컬렉션에 페이지가 없습니다.</p>", { emitUpdate: false });
-                        const titleInput = document.querySelector("#page-title-input");
-                        if (titleInput) {
-                            titleInput.value = "";
-                        }
-                    }
                 }
                 renderPageList();
             }
@@ -1198,10 +1230,12 @@ function bindNewCollectionButton() {
     }
 
     btn.addEventListener("click", async () => {
-        const name = prompt("새 컬렉션 이름을 입력하세요.", "새 컬렉션");
+        let name = prompt("새 컬렉션 이름을 입력하세요.", "새 컬렉션");
         if (name === null) {
             return;
         }
+
+        const plainName = name.trim() || "새 컬렉션";
 
         try {
             const res = await fetch("/api/collections", {
@@ -1209,7 +1243,7 @@ function bindNewCollectionButton() {
                 headers: {
                     "Content-Type": "application/json"
                 },
-                body: JSON.stringify({ name })
+                body: JSON.stringify({ name: plainName })
             });
 
             if (!res.ok) {
@@ -1217,6 +1251,7 @@ function bindNewCollectionButton() {
             }
 
             const collection = await res.json();
+            collection.name = plainName; // 복호화된 이름 저장
             collections.push(collection);
             currentCollectionId = collection.id;
             currentPageId = null;
@@ -1245,8 +1280,8 @@ async function saveCurrentPage() {
         return;
     }
 
-    const title = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
-    const content = editor.getHTML();
+    let title = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
+    let content = editor.getHTML();
 
     try {
         const res = await fetch("/api/pages/" + encodeURIComponent(currentPageId), {
@@ -1267,11 +1302,14 @@ async function saveCurrentPage() {
         const page = await res.json();
         console.log("페이지 저장 응답:", page);
 
+        // 복호화된 제목으로 업데이트
+        const decryptedTitle = titleInput ? titleInput.value || "제목 없음" : "제목 없음";
+
         pages = pages.map((p) => {
             if (p.id === page.id) {
                 return {
                     ...p,
-                    title: page.title,
+                    title: decryptedTitle,
                     updatedAt: page.updatedAt,
                     parentId: page.parentId ?? p.parentId ?? null,
                     sortOrder:
@@ -1368,6 +1406,11 @@ function bindLogoutButton() {
 
             if (!res.ok) {
                 throw new Error("HTTP " + res.status);
+            }
+
+            // 암호화 키 삭제
+            if (typeof cryptoManager !== 'undefined') {
+                cryptoManager.clearKey();
             }
 
             window.location.href = "/login";
@@ -1503,6 +1546,253 @@ function bindSettingsModal() {
     }
 }
 
+// 페이지 암호화 모달
+let currentEncryptingPageId = null;
+
+// 페이지 복호화 모달
+let currentDecryptingPage = null;
+
+function showEncryptionModal(pageId) {
+    currentEncryptingPageId = pageId;
+    const modal = document.querySelector("#page-encryption-modal");
+    if (modal) {
+        modal.classList.remove("hidden");
+        const passwordInput = document.querySelector("#encryption-password");
+        const confirmInput = document.querySelector("#encryption-password-confirm");
+        const errorEl = document.querySelector("#encryption-error");
+        if (passwordInput) passwordInput.value = "";
+        if (confirmInput) confirmInput.value = "";
+        if (errorEl) errorEl.textContent = "";
+        if (passwordInput) passwordInput.focus();
+    }
+}
+
+function closeEncryptionModal() {
+    const modal = document.querySelector("#page-encryption-modal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+    currentEncryptingPageId = null;
+}
+
+async function handleEncryption(event) {
+    event.preventDefault();
+
+    const passwordInput = document.querySelector("#encryption-password");
+    const confirmInput = document.querySelector("#encryption-password-confirm");
+    const errorEl = document.querySelector("#encryption-error");
+
+    if (!passwordInput || !confirmInput || !errorEl) {
+        console.error("암호화 폼 요소를 찾을 수 없습니다.");
+        return;
+    }
+
+    const password = passwordInput.value.trim();
+    const confirm = confirmInput.value.trim();
+    errorEl.textContent = "";
+
+    if (!password || !confirm) {
+        errorEl.textContent = "비밀번호를 입력해 주세요.";
+        console.log("암호화 실패: 비밀번호 미입력");
+        return;
+    }
+
+    if (password !== confirm) {
+        errorEl.textContent = "비밀번호가 일치하지 않습니다.";
+        console.log("암호화 실패: 비밀번호 불일치");
+        alert("비밀번호가 일치하지 않습니다. 다시 확인해 주세요.");
+        return;
+    }
+
+    if (password.length < 4) {
+        errorEl.textContent = "비밀번호는 최소 4자 이상이어야 합니다.";
+        return;
+    }
+
+    if (!currentEncryptingPageId) {
+        errorEl.textContent = "페이지 ID를 찾을 수 없습니다.";
+        return;
+    }
+
+    try {
+        // 현재 페이지 데이터 가져오기
+        const res = await fetch(`/api/pages/${encodeURIComponent(currentEncryptingPageId)}`);
+        if (!res.ok) {
+            throw new Error("HTTP " + res.status);
+        }
+
+        const page = await res.json();
+
+        // 암호화 키 생성
+        await cryptoManager.initializeKey(password);
+
+        // 내용만 암호화 (제목은 암호화하지 않음)
+        const encryptedContent = await cryptoManager.encrypt(page.content);
+
+        // 암호화된 데이터 저장
+        const updateRes = await fetch(`/api/pages/${encodeURIComponent(currentEncryptingPageId)}`, {
+            method: "PUT",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                title: page.title,
+                content: encryptedContent,
+                isEncrypted: true
+            })
+        });
+
+        if (!updateRes.ok) {
+            throw new Error("HTTP " + updateRes.status);
+        }
+
+        alert("페이지가 성공적으로 암호화되었습니다!");
+        closeEncryptionModal();
+
+        // 페이지 목록 새로고침
+        await fetchPageList();
+
+        // 현재 페이지 다시 로드 (복호화된 상태로)
+        if (currentPageId === currentEncryptingPageId) {
+            const titleInput = document.querySelector("#page-title-input");
+            if (titleInput) {
+                titleInput.value = page.title;
+            }
+            if (editor) {
+                editor.commands.setContent(page.content, { emitUpdate: false });
+            }
+        }
+
+        // 암호화 키 삭제
+        cryptoManager.clearKey();
+    } catch (error) {
+        console.error("암호화 오류:", error);
+        errorEl.textContent = "암호화 중 오류가 발생했습니다: " + error.message;
+    }
+}
+
+function bindEncryptionModal() {
+    const form = document.querySelector("#encryption-form");
+    const closeBtn = document.querySelector("#close-encryption-modal-btn");
+    const cancelBtn = document.querySelector("#cancel-encryption-btn");
+
+    if (form) {
+        form.addEventListener("submit", handleEncryption);
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener("click", closeEncryptionModal);
+    }
+
+    if (cancelBtn) {
+        cancelBtn.addEventListener("click", closeEncryptionModal);
+    }
+}
+
+// 페이지 복호화 모달 (암호화된 페이지 열 때)
+function showDecryptionModal(page) {
+    currentDecryptingPage = page;
+    const modal = document.querySelector("#page-decryption-modal");
+    if (modal) {
+        modal.classList.remove("hidden");
+        const passwordInput = document.querySelector("#decryption-password");
+        const errorEl = document.querySelector("#decryption-error");
+        if (passwordInput) passwordInput.value = "";
+        if (errorEl) errorEl.textContent = "";
+        if (passwordInput) passwordInput.focus();
+    }
+}
+
+function closeDecryptionModal() {
+    const modal = document.querySelector("#page-decryption-modal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+    currentDecryptingPage = null;
+}
+
+async function handleDecryption(event) {
+    event.preventDefault();
+
+    const passwordInput = document.querySelector("#decryption-password");
+    const errorEl = document.querySelector("#decryption-error");
+
+    if (!passwordInput || !errorEl) {
+        return;
+    }
+
+    const password = passwordInput.value.trim();
+    errorEl.textContent = "";
+
+    if (!password) {
+        errorEl.textContent = "비밀번호를 입력해 주세요.";
+        return;
+    }
+
+    if (!currentDecryptingPage) {
+        errorEl.textContent = "페이지 정보를 찾을 수 없습니다.";
+        return;
+    }
+
+    try {
+        await decryptAndLoadPage(currentDecryptingPage, password);
+        closeDecryptionModal();
+    } catch (error) {
+        console.error("복호화 처리 오류:", error);
+        errorEl.textContent = "비밀번호가 올바르지 않거나 복호화에 실패했습니다.";
+        cryptoManager.clearKey();
+    }
+}
+
+function bindDecryptionModal() {
+    const form = document.querySelector("#decryption-form");
+    const closeBtn = document.querySelector("#close-decryption-modal-btn");
+    const cancelBtn = document.querySelector("#cancel-decryption-btn");
+
+    if (form) {
+        form.addEventListener("submit", handleDecryption);
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener("click", closeDecryptionModal);
+    }
+
+    if (cancelBtn) {
+        cancelBtn.addEventListener("click", closeDecryptionModal);
+    }
+}
+
+async function decryptAndLoadPage(page, password) {
+    // 암호화 키 생성
+    await cryptoManager.initializeKey(password);
+
+    // 내용만 복호화 (제목은 평문)
+    const content = await cryptoManager.decrypt(page.content);
+
+    // 복호화 성공 시 currentPageId 설정
+    currentPageId = page.id;
+
+    // UI 업데이트
+    const titleInput = document.querySelector("#page-title-input");
+    if (titleInput) {
+        titleInput.value = page.title;
+    }
+
+    if (editor) {
+        editor.commands.setContent(content, { emitUpdate: false });
+    }
+
+    renderPageList();
+
+    // 모바일에서 페이지 로드 후 사이드바 닫기
+    if (window.innerWidth <= 768) {
+        closeSidebar();
+    }
+
+    // 복호화 성공 메시지
+    console.log("페이지 복호화 성공");
+}
+
 function openSidebar() {
     const sidebar = document.querySelector(".sidebar");
     const overlay = document.querySelector("#sidebar-overlay");
@@ -1590,8 +1880,9 @@ function initEvent() {
     });
 }
 
-function init() {
+async function init() {
     loadSettings();
+
     initEditor();
 	initEvent();
     bindToolbar();
@@ -1601,7 +1892,10 @@ function init() {
     bindSlashKeyHandlers();
 	bindLogoutButton();
     bindSettingsModal();
+    bindEncryptionModal();
+    bindDecryptionModal();
     bindMobileSidebar();
+
     fetchAndDisplayCurrentUser();
     fetchCollections().then(() => fetchPageList());
 }

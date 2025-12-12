@@ -42,6 +42,8 @@ async function handleLogin(event) {
             return;
         }
 
+        const data = await res.json();
+
         // 로그인 성공 → 메인 페이지로 이동
         window.location.href = "/";
     } catch (error) {
