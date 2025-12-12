@@ -150,14 +150,17 @@ let slashState = {
     fromPos: null
 };
 
-function showErrorInEditor(message) {
-    // XSS 방지: HTML 이스케이프 처리
-    const escapeHtml = (text) => {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    };
+/**
+ * XSS 방지: HTML 이스케이프 처리
+ * 사용자 입력값을 안전하게 HTML에 삽입하기 위해 사용
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
+function showErrorInEditor(message) {
     const escapedMessage = escapeHtml(message);
 
     if (editor) {
@@ -726,22 +729,24 @@ function renderPageList() {
         const hasPages = colPages.length > 0;
 
         // 페이지가 있을 때만 화살표 표시
+        // XSS 방지: collection.name을 escapeHtml로 이스케이프 처리
         if (hasPages) {
             title.innerHTML = `
                 <span class="collection-toggle ${expandedCollections.has(collection.id) ? "expanded" : ""}">
                     <i class="fa-solid fa-caret-right"></i>
                 </span>
                 <i class="fa-regular fa-folder"></i>
-                <span>${collection.name || "제목 없음"}</span>
+                <span>${escapeHtml(collection.name || "제목 없음")}</span>
             `;
         } else {
             // 화살표가 없어도 동일한 너비의 공간을 차지하도록 빈 span 추가
+            // XSS 방지: collection.name을 escapeHtml로 이스케이프 처리
             title.innerHTML = `
                 <span class="collection-toggle" style="visibility: hidden;">
                     <i class="fa-solid fa-caret-right"></i>
                 </span>
                 <i class="fa-regular fa-folder"></i>
-                <span>${collection.name || "제목 없음"}</span>
+                <span>${escapeHtml(collection.name || "제목 없음")}</span>
             `;
         }
 
@@ -816,8 +821,9 @@ function renderPageList() {
                     titleSpan.className = "page-list-item-title";
 
                     // 암호화된 페이지는 자물쇠 아이콘 표시
+                    // XSS 방지: node.title을 escapeHtml로 이스케이프 처리
                     if (node.isEncrypted) {
-                        titleSpan.innerHTML = `<i class="fa-solid fa-lock" style="margin-right: 6px; color: #2d5f5d;"></i>${node.title || "제목 없음"}`;
+                        titleSpan.innerHTML = `<i class="fa-solid fa-lock" style="margin-right: 6px; color: #2d5f5d;"></i>${escapeHtml(node.title || "제목 없음")}`;
                     } else {
                         titleSpan.textContent = node.title || "제목 없음";
                     }

@@ -111,6 +111,18 @@ function generateCsrfToken() {
 }
 
 /**
+ * XSS 방지: HTML 태그 제거 (sanitization)
+ * 사용자 입력값에서 잠재적으로 위험한 HTML 태그를 제거
+ */
+function sanitizeInput(input) {
+    if (typeof input !== 'string') {
+        return input;
+    }
+    // HTML 태그 제거
+    return input.replace(/<[^>]*>/g, '');
+}
+
+/**
  * CSRF 토큰 검증 (Double Submit Cookie 패턴)
  */
 function verifyCsrfToken(req) {
@@ -453,8 +465,18 @@ const authLimiter = rateLimit({
 app.use(express.json());
 app.use(cookieParser());
 
-// 보안 개선: 기본 보안 헤더 추가 (CSP는 제외 - 개발 중 문제 발생 가능)
+// 보안 개선: 기본 보안 헤더 추가 (XSS, 클릭재킹 방지 등)
 app.use((req, res, next) => {
+    // XSS 방지를 위한 Content Security Policy
+    res.setHeader('Content-Security-Policy',
+        "default-src 'self'; " +
+        "script-src 'self' https://cdn.jsdelivr.net https://esm.sh; " +
+        "style-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com 'unsafe-inline'; " +
+        "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; " +
+        "img-src 'self' data:; " +
+        "connect-src 'self';"
+    );
+
     // 추가 보안 헤더
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -854,7 +876,8 @@ app.get("/api/collections", authMiddleware, async (req, res) => {
  */
 app.post("/api/collections", authMiddleware, async (req, res) => {
     const rawName = typeof req.body.name === "string" ? req.body.name.trim() : "";
-    const name = rawName !== "" ? rawName : "새 컬렉션";
+    // XSS 방지: HTML 태그 제거
+    const name = sanitizeInput(rawName !== "" ? rawName : "새 컬렉션");
 
     try {
         const userId = req.user.id;
@@ -1006,7 +1029,8 @@ app.get("/api/pages/:id", authMiddleware, async (req, res) => {
  */
 app.post("/api/pages", authMiddleware, async (req, res) => {
     const rawTitle = typeof req.body.title === "string" ? req.body.title : "";
-    const title = rawTitle.trim() !== "" ? rawTitle.trim() : "제목 없음";
+    // XSS 방지: HTML 태그 제거
+    const title = sanitizeInput(rawTitle.trim() !== "" ? rawTitle.trim() : "제목 없음");
 
     const now = new Date();
     const id = generatePageId(now);
@@ -1102,7 +1126,8 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
     const id = req.params.id;
 	const userId = req.user.id;
 
-    const titleFromBody = typeof req.body.title === "string" ? req.body.title.trim() : null;
+    // XSS 방지: HTML 태그 제거
+    const titleFromBody = typeof req.body.title === "string" ? sanitizeInput(req.body.title.trim()) : null;
     const contentFromBody = typeof req.body.content === "string" ? req.body.content : null;
     const isEncryptedFromBody = typeof req.body.isEncrypted === "boolean" ? req.body.isEncrypted : null;
 
