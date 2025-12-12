@@ -12,6 +12,18 @@ const StarterKit = Tiptap.StarterKit;
 
 const Extension = Tiptap.Core.Extension;
 
+/**
+ * 보안 개선: CSRF 토큰이 포함된 fetch 래퍼 함수
+ * POST, PUT, DELETE 요청에 자동으로 CSRF 토큰 헤더 추가
+ */
+function secureFetch(url, options = {}) {
+    // GET 요청이 아닌 경우 CSRF 토큰 추가
+    if (!options.method || options.method.toUpperCase() !== 'GET') {
+        options = window.csrfUtils.addCsrfHeader(options);
+    }
+    return fetch(url, options);
+}
+
 const CustomEnter = Extension.create({
     name: "customEnter",
     addKeyboardShortcuts() {
@@ -139,12 +151,21 @@ let slashState = {
 };
 
 function showErrorInEditor(message) {
+    // XSS 방지: HTML 이스케이프 처리
+    const escapeHtml = (text) => {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    };
+
+    const escapedMessage = escapeHtml(message);
+
     if (editor) {
-        editor.commands.setContent(`<p style="color: red;">${message}</p>`, { emitUpdate: false });
+        editor.commands.setContent(`<p style="color: red;">${escapedMessage}</p>`, { emitUpdate: false });
     } else {
         const el = document.querySelector("#editor");
         if (el) {
-            el.innerHTML = `<p style="color: red;">${message}</p>`;
+            el.innerHTML = `<p style="color: red;">${escapedMessage}</p>`;
         }
     }
 }
@@ -1011,7 +1032,7 @@ function bindPageListClick() {
                 const ok = confirm("이 컬렉션과 포함된 모든 페이지를 삭제하시겠습니까?");
                 if (!ok) return;
                 try {
-                    const res = await fetch("/api/collections/" + encodeURIComponent(colId), {
+                    const res = await secureFetch("/api/collections/" + encodeURIComponent(colId), {
                         method: "DELETE"
                     });
                     if (!res.ok) {
@@ -1077,7 +1098,7 @@ function bindPageListClick() {
             const plainContent = "<p></p>";
 
             try {
-                const res = await fetch("/api/pages", {
+                const res = await secureFetch("/api/pages", {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json"
@@ -1149,7 +1170,7 @@ function bindPageListClick() {
                 const ok = confirm("이 페이지를 삭제하시겠습니까?");
                 if (!ok) return;
                 try {
-                    const res = await fetch("/api/pages/" + encodeURIComponent(pageId), {
+                    const res = await secureFetch("/api/pages/" + encodeURIComponent(pageId), {
                         method: "DELETE"
                     });
                     if (!res.ok) {
@@ -1238,7 +1259,7 @@ function bindNewCollectionButton() {
         const plainName = name.trim() || "새 컬렉션";
 
         try {
-            const res = await fetch("/api/collections", {
+            const res = await secureFetch("/api/collections", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
@@ -1284,7 +1305,7 @@ async function saveCurrentPage() {
     let content = editor.getHTML();
 
     try {
-        const res = await fetch("/api/pages/" + encodeURIComponent(currentPageId), {
+        const res = await secureFetch("/api/pages/" + encodeURIComponent(currentPageId), {
             method: "PUT",
             headers: {
                 "Content-Type": "application/json"
@@ -1400,7 +1421,7 @@ function bindLogoutButton() {
 
     btn.addEventListener("click", async () => {
         try {
-            const res = await fetch("/api/auth/logout", {
+            const res = await secureFetch("/api/auth/logout", {
                 method: "POST"
             });
 
@@ -1630,7 +1651,7 @@ async function handleEncryption(event) {
         const encryptedContent = await cryptoManager.encrypt(page.content);
 
         // 암호화된 데이터 저장
-        const updateRes = await fetch(`/api/pages/${encodeURIComponent(currentEncryptingPageId)}`, {
+        const updateRes = await secureFetch(`/api/pages/${encodeURIComponent(currentEncryptingPageId)}`, {
             method: "PUT",
             headers: {
                 "Content-Type": "application/json"

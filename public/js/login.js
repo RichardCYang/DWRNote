@@ -20,13 +20,16 @@ async function handleLogin(event) {
     }
 
     try {
-        const res = await fetch("/api/auth/login", {
+        // 보안: CSRF 토큰 추가 (일관성 유지)
+        const options = window.csrfUtils.addCsrfHeader({
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({ username, password })
         });
+
+        const res = await fetch("/api/auth/login", options);
 
         if (!res.ok) {
             let message = "로그인에 실패했습니다.";

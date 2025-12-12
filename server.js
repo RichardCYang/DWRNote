@@ -4,6 +4,7 @@ const mysql = require("mysql2/promise");
 const bcrypt = require("bcrypt");
 const cookieParser = require("cookie-parser");
 const crypto = require("crypto");
+const rateLimit = require("express-rate-limit");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,11 +12,24 @@ const PORT = process.env.PORT || 3000;
 // 세션 / 인증 관련 설정
 const SESSION_COOKIE_NAME = "nteok_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일
+const CSRF_COOKIE_NAME = "nteok_csrf";
 
-// 기본 관리자 계정 (최초 1번만 생성)
+// 보안 개선: 기본 관리자 계정 비밀번호를 강제로 변경하도록 경고
+// 환경변수로 설정하지 않으면 무작위 비밀번호를 생성하고 콘솔에 출력
 const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
-const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin";
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || crypto.randomBytes(16).toString("hex");
 const BCRYPT_SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || 12);
+
+// 기본 비밀번호가 환경변수로 설정되지 않았다면 경고 메시지 출력
+if (!process.env.ADMIN_PASSWORD) {
+    console.warn("\n" + "=".repeat(80));
+    console.warn("⚠️  보안 경고: 기본 관리자 비밀번호가 환경변수로 설정되지 않았습니다!");
+    console.warn(`   관리자 계정: ${DEFAULT_ADMIN_USERNAME}`);
+    console.warn(`   임시 비밀번호: ${DEFAULT_ADMIN_PASSWORD}`);
+    console.warn("   첫 로그인 후 반드시 비밀번호를 변경하세요!");
+    console.warn("   프로덕션 환경에서는 ADMIN_PASSWORD 환경변수를 반드시 설정하세요.");
+    console.warn("=".repeat(80) + "\n");
+}
 
 /**
  * DB 연결 설정 정보
@@ -51,20 +65,22 @@ function formatDateForDb(date) {
 }
 
 /**
- * ISO string 기반 페이지 ID 생성
+ * 보안 개선: 암호학적으로 안전한 페이지 ID 생성
+ * Math.random() 대신 crypto.randomBytes 사용
  */
 function generatePageId(now) {
     const iso = now.toISOString().replace(/[:.]/g, "-");
-    const rand = Math.random().toString(36).slice(2, 8);
+    const rand = crypto.randomBytes(6).toString("hex"); // 12자 hex 문자열
     return "page-" + iso + "-" + rand;
 }
 
 /**
- * ISO string 기반 컬렉션 ID 생성
+ * 보안 개선: 암호학적으로 안전한 컬렉션 ID 생성
+ * Math.random() 대신 crypto.randomBytes 사용
  */
 function generateCollectionId(now) {
     const iso = now.toISOString().replace(/[:.]/g, "-");
-    const rand = Math.random().toString(36).slice(2, 8);
+    const rand = crypto.randomBytes(6).toString("hex"); // 12자 hex 문자열
     return "col-" + iso + "-" + rand;
 }
 
@@ -85,6 +101,31 @@ function toIsoString(value) {
         return value + "Z";
     }
     return String(value);
+}
+
+/**
+ * CSRF 토큰 생성
+ */
+function generateCsrfToken() {
+    return crypto.randomBytes(32).toString("hex");
+}
+
+/**
+ * CSRF 토큰 검증 (Double Submit Cookie 패턴)
+ */
+function verifyCsrfToken(req) {
+    const tokenFromHeader = req.headers["x-csrf-token"];
+    const tokenFromCookie = req.cookies[CSRF_COOKIE_NAME];
+
+    if (!tokenFromHeader || !tokenFromCookie) {
+        return false;
+    }
+
+    // 타이밍 공격 방지를 위한 상수 시간 비교
+    return crypto.timingSafeEqual(
+        Buffer.from(tokenFromHeader),
+        Buffer.from(tokenFromCookie)
+    );
 }
 
 /**
@@ -143,6 +184,30 @@ function authMiddleware(req, res, next) {
         id: session.userId,
         username: session.username
     };
+
+    next();
+}
+
+/**
+ * CSRF 토큰 검증 미들웨어
+ * GET, HEAD, OPTIONS 요청은 제외
+ */
+function csrfMiddleware(req, res, next) {
+    // 안전한 메서드는 CSRF 검증 불필요
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+        return next();
+    }
+
+    // 로그인/회원가입은 CSRF 토큰 없이도 허용 (첫 접속 시)
+    if (req.path === "/api/auth/login" || req.path === "/api/auth/register") {
+        return next();
+    }
+
+    // CSRF 토큰 검증
+    if (!verifyCsrfToken(req)) {
+        console.warn("CSRF 토큰 검증 실패:", req.path, req.method);
+        return res.status(403).json({ error: "CSRF 토큰이 유효하지 않습니다." });
+    }
 
     next();
 }
@@ -361,6 +426,28 @@ async function createCollection({ userId, name }) {
 }
 
 /**
+ * 레이트 리밋 설정
+ */
+// 일반 API 레이트 리밋 (창당 100 요청)
+const generalLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1분
+    max: 100, // 최대 100 요청
+    message: { error: "너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해 주세요." },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// 로그인/회원가입 레이트 리밋 (브루트포스 방지)
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15분
+    max: 5, // 최대 5번 시도
+    message: { error: "너무 많은 로그인 시도가 발생했습니다. 15분 후 다시 시도해 주세요." },
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true, // 성공한 요청은 카운트하지 않음
+});
+
+/**
  * 미들웨어 설정
  */
 app.use(express.json());
@@ -376,6 +463,27 @@ app.use((req, res, next) => {
 
     next();
 });
+
+// CSRF 토큰 쿠키 설정 미들웨어 (모든 요청에 대해)
+app.use((req, res, next) => {
+    // CSRF 쿠키가 없으면 생성
+    if (!req.cookies[CSRF_COOKIE_NAME]) {
+        const token = generateCsrfToken();
+        res.cookie(CSRF_COOKIE_NAME, token, {
+            httpOnly: false, // JavaScript에서 읽을 수 있어야 함
+            sameSite: "strict",
+            secure: process.env.NODE_ENV === "production",
+            maxAge: SESSION_TTL_MS
+        });
+    }
+    next();
+});
+
+// CSRF 검증 미들웨어 (API 엔드포인트에만 적용)
+app.use("/api", csrfMiddleware);
+
+// 일반 API 레이트 리밋 적용
+app.use("/api", generalLimiter);
 
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 
@@ -436,7 +544,7 @@ app.get("/api/debug/ping", (req, res) => {
  * POST /api/auth/login
  * body: { username: string, password: string }
  */
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", authLimiter, async (req, res) => {
     const { username, password } = req.body || {};
 
     if (typeof username !== "string" || typeof password !== "string") {
@@ -456,7 +564,8 @@ app.post("/api/auth/login", async (req, res) => {
         );
 
         if (!rows.length) {
-            console.warn("로그인 실패 - 존재하지 않는 사용자:", trimmedUsername);
+            // 보안 개선: 로그에서 사용자명 제거 (정보 노출 방지)
+            console.warn("로그인 실패 - 존재하지 않는 사용자 (IP: " + req.ip + ")");
             return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
         }
 
@@ -464,7 +573,8 @@ app.post("/api/auth/login", async (req, res) => {
 
         const ok = await bcrypt.compare(password, user.password_hash);
         if (!ok) {
-            console.warn("로그인 실패 - 비밀번호 불일치:", trimmedUsername);
+            // 보안 개선: 로그에서 사용자명 제거 (정보 노출 방지)
+            console.warn("로그인 실패 - 비밀번호 불일치 (IP: " + req.ip + ")");
             return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
         }
 
@@ -473,6 +583,15 @@ app.post("/api/auth/login", async (req, res) => {
         res.cookie(SESSION_COOKIE_NAME, sessionId, {
             httpOnly: true,
             sameSite: "lax",
+            secure: process.env.NODE_ENV === "production",
+            maxAge: SESSION_TTL_MS
+        });
+
+        // 보안 개선: 로그인 성공 시 CSRF 토큰 갱신
+        const newCsrfToken = generateCsrfToken();
+        res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
+            httpOnly: false,
+            sameSite: "strict",
             secure: process.env.NODE_ENV === "production",
             maxAge: SESSION_TTL_MS
         });
@@ -515,7 +634,7 @@ app.post("/api/auth/logout", (req, res) => {
  * POST /api/auth/register
  * body: { username: string, password: string }
  */
-app.post("/api/auth/register", async (req, res) => {
+app.post("/api/auth/register", authLimiter, async (req, res) => {
     const { username, password } = req.body || {};
 
     if (typeof username !== "string" || typeof password !== "string") {
@@ -580,6 +699,15 @@ app.post("/api/auth/register", async (req, res) => {
         res.cookie(SESSION_COOKIE_NAME, sessionId, {
             httpOnly: true,
             sameSite: "lax",
+            secure: process.env.NODE_ENV === "production",
+            maxAge: SESSION_TTL_MS
+        });
+
+        // 보안 개선: 회원가입 성공 시 CSRF 토큰 갱신
+        const newCsrfToken = generateCsrfToken();
+        res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
+            httpOnly: false,
+            sameSite: "strict",
             secure: process.env.NODE_ENV === "production",
             maxAge: SESSION_TTL_MS
         });
