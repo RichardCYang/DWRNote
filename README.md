@@ -3,7 +3,7 @@
 셀프 호스팅 가능한 간단한 웹 기반 노트 앱 프로젝트
 
 ---
-<img src="./logo_thumbnail.jpg" width="100%" title="DWR_Logo"/>
+<img src="./example.png" width="100%" title="DWR_Logo"/>
 
 ## 개요
 
