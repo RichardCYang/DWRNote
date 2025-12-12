@@ -475,8 +475,12 @@ body {
     border-radius: 3px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     display: flex;
-    gap: 4px;
+    flex-direction: column;
+    gap: 2px;
     z-index: 20;
+    min-width: 150px;
+    max-height: 320px;
+    overflow-y: auto;
 }
 
 .toolbar-color-menu[hidden] {
@@ -484,16 +488,26 @@ body {
 }
 
 .toolbar-color-menu .color-option {
-    padding: 4px;
+    padding: 8px 12px;
     border-radius: 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .toolbar-color-menu .color-swatch {
     display: inline-block;
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     border-radius: 2px;
     border: 1px solid #d4cfc4;
+    flex-shrink: 0;
+}
+
+.toolbar-color-menu .color-option--clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .toolbar-color-menu .color-option--clear i {
