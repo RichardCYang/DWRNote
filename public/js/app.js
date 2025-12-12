@@ -696,13 +696,30 @@ function renderPageList() {
 
         const title = document.createElement("div");
         title.className = "collection-title";
-        title.innerHTML = `
-            <span class="collection-toggle ${expandedCollections.has(collection.id) ? "expanded" : ""}">
-                <i class="fa-solid fa-caret-right"></i>
-            </span>
-            <i class="fa-regular fa-folder"></i>
-            <span>${collection.name || "제목 없음"}</span>
-        `;
+
+        // 컬렉션에 페이지가 있는지 확인
+        const colPages = pages.filter((p) => p.collectionId === collection.id);
+        const hasPages = colPages.length > 0;
+
+        // 페이지가 있을 때만 화살표 표시
+        if (hasPages) {
+            title.innerHTML = `
+                <span class="collection-toggle ${expandedCollections.has(collection.id) ? "expanded" : ""}">
+                    <i class="fa-solid fa-caret-right"></i>
+                </span>
+                <i class="fa-regular fa-folder"></i>
+                <span>${collection.name || "제목 없음"}</span>
+            `;
+        } else {
+            // 화살표가 없어도 동일한 너비의 공간을 차지하도록 빈 span 추가
+            title.innerHTML = `
+                <span class="collection-toggle" style="visibility: hidden;">
+                    <i class="fa-solid fa-caret-right"></i>
+                </span>
+                <i class="fa-regular fa-folder"></i>
+                <span>${collection.name || "제목 없음"}</span>
+            `;
+        }
 
         const actions = document.createElement("div");
         actions.className = "collection-actions";
@@ -740,11 +757,10 @@ function renderPageList() {
         item.appendChild(header);
 
         const expanded = expandedCollections.has(collection.id);
-        if (expanded) {
+        if (expanded && hasPages) {
             const pageList = document.createElement("ul");
             pageList.className = "page-list";
 
-            const colPages = pages.filter((p) => p.collectionId === collection.id);
             if (!colPages.length) {
                 const empty = document.createElement("div");
                 empty.className = "collection-empty";
@@ -758,8 +774,8 @@ function renderPageList() {
                     li.className = "page-list-item";
                     li.dataset.pageId = node.id;
 
-                    // 깊이에 따른 들여쓰기
-                    li.style.paddingLeft = 14 + depth * 16 + "px";
+                    // 깊이에 따른 들여쓰기 (collection-header 12px + 화살표 14px + gap 6px = 폴더 아이콘 위치)
+                    li.style.paddingLeft = 32 + depth * 16 + "px";
 
                     const row = document.createElement("div");
                     row.style.display = "flex";
