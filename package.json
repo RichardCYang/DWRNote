@@ -1,7 +1,7 @@
 {
-	"name": "dwrnote",
+	"name": "nteok",
 	"version": "1.0.0",
-	"description": "A Simple Note WebApp",
+	"description": "NTEOK - 한국어 넋(NEOK)과 노트(NOTE)의 합성어로 인간의 넋과 얼을 담는 노트",
 	"main": "server.js",
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",

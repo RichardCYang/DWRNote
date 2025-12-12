@@ -45,10 +45,11 @@ body {
 }
 
 .app-title {
-    font-weight: 600;
+    font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    font-weight: 700;
     font-size: 17px;
-    color: #1a1a1a;
-    letter-spacing: -0.02em;
+    color: #5a6169;
+    letter-spacing: 0.02em;
 }
 
 .app-header-right {

@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 세션 / 인증 관련 설정
-const SESSION_COOKIE_NAME = "dwrnote_session";
+const SESSION_COOKIE_NAME = "nteok_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일
 
 // 기본 관리자 계정 (최초 1번만 생성)
@@ -25,7 +25,7 @@ const DB_CONFIG = {
     port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
     user: process.env.DB_USER || "root",
     password: process.env.DB_PASSWORD || "admin",
-    database: process.env.DB_NAME || "dwrnote",
+    database: process.env.DB_NAME || "nteok",
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
@@ -958,7 +958,7 @@ app.delete("/api/pages/:id", authMiddleware, async (req, res) => {
     try {
         await initDb();
         app.listen(PORT, () => {
-            console.log(`DWRNote 앱이 http://localhost:${PORT} 에서 실행 중.`);
+            console.log(`NTEOK 앱이 http://localhost:${PORT} 에서 실행 중.`);
         });
     } catch (error) {
         console.error("서버 시작 중 치명적 오류:", error);
