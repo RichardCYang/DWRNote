@@ -26,6 +26,9 @@
                             <div class="user-avatar" id="user-avatar"></div>
                             <span class="user-name" id="user-name">사용자</span>
                         </div>
+                        <button id="settings-btn" class="settings-btn" title="설정">
+                            <i class="fa-solid fa-gear"></i>
+                        </button>
                     </div>
                     <div class="sidebar-main">
                         <ul id="collection-list" class="collection-list"></ul>
@@ -213,6 +216,43 @@
         </div>
         <!-- Tiptap 브라우저 번들 (전역 Tiptap 객체 제공) -->
         <script src="https://cdn.jsdelivr.net/gh/panphora/tiptap-for-browser@2.0.0-beta.166/tiptap-for-browser.min.js"></script>
+
+        <!-- 설정 모달 -->
+        <div id="settings-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>설정</h2>
+                    <button id="close-settings-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="settings-section">
+                        <h3>계정 정보</h3>
+                        <div class="settings-item">
+                            <label>사용자명</label>
+                            <div id="settings-username" class="settings-value">-</div>
+                        </div>
+                    </div>
+                    <div class="settings-section">
+                        <h3>편집기</h3>
+                        <div class="settings-item">
+                            <label>기본 모드</label>
+                            <select id="settings-default-mode" class="settings-select">
+                                <option value="read">읽기모드</option>
+                                <option value="write">쓰기모드</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="save-settings-btn" class="primary-button">
+                        저장
+                    </button>
+                </div>
+            </div>
+        </div>
 
         <!-- 메인 코드 (import 안 씀, 전역 Tiptap 사용) -->
         <script type="module" src="/js/app.js"></script>

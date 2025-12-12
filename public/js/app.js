@@ -59,6 +59,10 @@ let expandedCollections = new Set();
 let colorDropdownElement = null;
 let colorMenuElement = null;
 let isWriteMode = false;
+let currentUser = null;
+let userSettings = {
+    defaultMode: 'read' // 'read' or 'write'
+};
 
 // 슬래시(/) 명령 블록 메뉴 관련 상태
 const SLASH_ITEMS = [
@@ -1377,6 +1381,7 @@ async function fetchAndDisplayCurrentUser() {
         }
 
         const user = await res.json();
+        currentUser = user;
 
         const userAvatarEl = document.querySelector("#user-avatar");
         const userNameEl = document.querySelector("#user-name");
@@ -1400,6 +1405,91 @@ async function fetchAndDisplayCurrentUser() {
         if (userAvatarEl) {
             userAvatarEl.textContent = "?";
         }
+    }
+}
+
+function openSettingsModal() {
+    const modal = document.querySelector("#settings-modal");
+    const usernameEl = document.querySelector("#settings-username");
+    const defaultModeSelect = document.querySelector("#settings-default-mode");
+
+    if (!modal) {
+        return;
+    }
+
+    // 현재 사용자 정보 표시
+    if (usernameEl && currentUser) {
+        usernameEl.textContent = currentUser.username || "-";
+    }
+
+    // 현재 설정 값 표시
+    if (defaultModeSelect) {
+        defaultModeSelect.value = userSettings.defaultMode;
+    }
+
+    modal.classList.remove("hidden");
+}
+
+function closeSettingsModal() {
+    const modal = document.querySelector("#settings-modal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+}
+
+function saveSettings() {
+    const defaultModeSelect = document.querySelector("#settings-default-mode");
+
+    if (defaultModeSelect) {
+        userSettings.defaultMode = defaultModeSelect.value;
+        // localStorage에 설정 저장
+        localStorage.setItem("userSettings", JSON.stringify(userSettings));
+        console.log("설정 저장됨:", userSettings);
+    }
+
+    closeSettingsModal();
+    alert("설정이 저장되었습니다.");
+}
+
+function loadSettings() {
+    try {
+        const saved = localStorage.getItem("userSettings");
+        if (saved) {
+            userSettings = JSON.parse(saved);
+        }
+    } catch (error) {
+        console.error("설정 로드 실패:", error);
+    }
+}
+
+function bindSettingsModal() {
+    const settingsBtn = document.querySelector("#settings-btn");
+    const closeBtn = document.querySelector("#close-settings-btn");
+    const saveBtn = document.querySelector("#save-settings-btn");
+    const overlay = document.querySelector(".modal-overlay");
+
+    if (settingsBtn) {
+        settingsBtn.addEventListener("click", () => {
+            openSettingsModal();
+        });
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener("click", () => {
+            closeSettingsModal();
+        });
+    }
+
+    if (saveBtn) {
+        saveBtn.addEventListener("click", () => {
+            saveSettings();
+        });
+    }
+
+    if (overlay) {
+        overlay.addEventListener("click", () => {
+            closeSettingsModal();
+        });
     }
 }
 
@@ -1450,6 +1540,7 @@ function initEvent() {
 }
 
 function init() {
+    loadSettings();
     initEditor();
 	initEvent();
     bindToolbar();
@@ -1458,6 +1549,7 @@ function init() {
     bindModeToggle();
     bindSlashKeyHandlers();
 	bindLogoutButton();
+    bindSettingsModal();
     fetchAndDisplayCurrentUser();
     fetchCollections().then(() => fetchPageList());
 }
