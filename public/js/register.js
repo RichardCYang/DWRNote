@@ -32,8 +32,22 @@ async function handleRegister(event) {
         return;
     }
 
-    if (password.length < 6) {
-        errorEl.textContent = "비밀번호는 6자 이상으로 입력해 주세요.";
+    // 보안 개선: 비밀번호 강도 검증 강화
+    if (password.length < 10) {
+        errorEl.textContent = "비밀번호는 10자 이상이어야 합니다.";
+        return;
+    }
+
+    const hasUpperCase = /[A-Z]/.test(password);
+    const hasLowerCase = /[a-z]/.test(password);
+    const hasNumbers = /\d/.test(password);
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+
+    const strength = [hasUpperCase, hasLowerCase, hasNumbers, hasSpecialChar]
+        .filter(Boolean).length;
+
+    if (strength < 3) {
+        errorEl.textContent = "비밀번호는 대문자, 소문자, 숫자, 특수문자 중 3가지 이상을 포함해야 합니다.";
         return;
     }
 

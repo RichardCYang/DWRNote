@@ -5,14 +5,17 @@ const bcrypt = require("bcrypt");
 const cookieParser = require("cookie-parser");
 const crypto = require("crypto");
 const rateLimit = require("express-rate-limit");
+const DOMPurify = require("isomorphic-dompurify");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 세션 / 인증 관련 설정
 const SESSION_COOKIE_NAME = "nteok_session";
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7일 (idle timeout)
+const SESSION_ABSOLUTE_TTL_MS = 1000 * 60 * 60 * 24; // 24시간 (absolute timeout)
 const CSRF_COOKIE_NAME = "nteok_csrf";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 // 보안 개선: 기본 관리자 계정 비밀번호를 강제로 변경하도록 경고
 // 환경변수로 설정하지 않으면 무작위 비밀번호를 생성하고 콘솔에 출력
@@ -113,6 +116,7 @@ function generateCsrfToken() {
 /**
  * XSS 방지: HTML 태그 제거 (sanitization)
  * 사용자 입력값에서 잠재적으로 위험한 HTML 태그를 제거
+ * 제목 등 평문 필드에 사용
  */
 function sanitizeInput(input) {
     if (typeof input !== 'string') {
@@ -120,6 +124,77 @@ function sanitizeInput(input) {
     }
     // HTML 태그 제거
     return input.replace(/<[^>]*>/g, '');
+}
+
+/**
+ * 보안 개선: HTML 콘텐츠 정화 (DOMPurify)
+ * 에디터 콘텐츠 등 HTML이 필요한 필드에 사용
+ */
+function sanitizeHtmlContent(html) {
+    if (typeof html !== 'string') {
+        return html;
+    }
+
+    // DOMPurify로 안전한 HTML만 허용
+    return DOMPurify.sanitize(html, {
+        ALLOWED_TAGS: [
+            'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
+            'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+            'ul', 'ol', 'li', 'blockquote',
+            'a', 'span', 'div'
+        ],
+        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel'],
+        ALLOW_DATA_ATTR: false,
+        ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+    });
+}
+
+/**
+ * 보안 개선: 비밀번호 강도 검증
+ * @param {string} password - 검증할 비밀번호
+ * @returns {{valid: boolean, error?: string}}
+ */
+function validatePasswordStrength(password) {
+    if (!password || typeof password !== 'string') {
+        return { valid: false, error: "비밀번호를 입력해 주세요." };
+    }
+
+    if (password.length < 10) {
+        return { valid: false, error: "비밀번호는 10자 이상이어야 합니다." };
+    }
+
+    const hasUpperCase = /[A-Z]/.test(password);
+    const hasLowerCase = /[a-z]/.test(password);
+    const hasNumbers = /\d/.test(password);
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+
+    const strength = [hasUpperCase, hasLowerCase, hasNumbers, hasSpecialChar]
+        .filter(Boolean).length;
+
+    if (strength < 3) {
+        return {
+            valid: false,
+            error: "비밀번호는 대문자, 소문자, 숫자, 특수문자 중 3가지 이상을 포함해야 합니다."
+        };
+    }
+
+    return { valid: true };
+}
+
+/**
+ * 보안 개선: 에러 로깅 (프로덕션에서는 상세 정보 숨김)
+ * @param {string} context - 에러 발생 위치
+ * @param {Error} error - 에러 객체
+ */
+function logError(context, error) {
+    if (IS_PRODUCTION) {
+        // 프로덕션: 간단한 에러 메시지만
+        console.error(`[오류] ${context}`);
+        // 실제 프로덕션에서는 로깅 서비스로 전송 권장 (e.g., Sentry, Winston)
+    } else {
+        // 개발: 상세한 스택 트레이스
+        console.error(`[오류] ${context}:`, error);
+    }
 }
 
 /**
@@ -142,15 +217,20 @@ function verifyCsrfToken(req) {
 
 /**
  * 세션 생성
+ * 보안 개선: idle timeout과 absolute timeout 모두 적용
  */
 function createSession(user) {
     const sessionId = crypto.randomBytes(24).toString("hex");
-    const expiresAt = Date.now() + SESSION_TTL_MS;
+    const now = Date.now();
+    const expiresAt = now + SESSION_TTL_MS; // idle timeout
+    const absoluteExpiry = now + SESSION_ABSOLUTE_TTL_MS; // absolute timeout
 
     sessions.set(sessionId, {
         userId: user.id,
         username: user.username,
-        expiresAt
+        expiresAt,
+        absoluteExpiry,
+        createdAt: now
     });
 
     return sessionId;
@@ -158,6 +238,7 @@ function createSession(user) {
 
 /**
  * 요청에서 세션 읽기
+ * 보안 개선: idle timeout과 absolute timeout 모두 검증
  */
 function getSessionFromRequest(req) {
     if (!req.cookies) {
@@ -174,10 +255,22 @@ function getSessionFromRequest(req) {
         return null;
     }
 
-    if (session.expiresAt <= Date.now()) {
+    const now = Date.now();
+
+    // 절대 만료 시간 체크 (세션 생성 후 24시간)
+    if (session.absoluteExpiry <= now) {
         sessions.delete(sessionId);
         return null;
     }
+
+    // Idle timeout 체크 (마지막 활동 후 7일)
+    if (session.expiresAt <= now) {
+        sessions.delete(sessionId);
+        return null;
+    }
+
+    // 세션이 유효하면 idle timeout 갱신
+    session.expiresAt = now + SESSION_TTL_MS;
 
     return { id: sessionId, ...session };
 }
@@ -467,7 +560,9 @@ app.use(cookieParser());
 
 // 보안 개선: 기본 보안 헤더 추가 (XSS, 클릭재킹 방지 등)
 app.use((req, res, next) => {
-    // XSS 방지를 위한 Content Security Policy
+    // 보안 개선: CSP 강화 - unsafe-inline 제거 권장
+    // 참고: 모든 인라인 스타일을 외부 CSS로 이동하면 'unsafe-inline' 제거 가능
+    // 또는 nonce 기반 CSP로 전환 가능
     res.setHeader('Content-Security-Policy',
         "default-src 'self'; " +
         "script-src 'self' https://cdn.jsdelivr.net https://esm.sh; " +
@@ -480,7 +575,7 @@ app.use((req, res, next) => {
     // 추가 보안 헤더
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('X-XSS-Protection', '1; mode=block');
+    // X-XSS-Protection은 구식이며 CSP로 충분히 대체됨 (제거)
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
     next();
@@ -494,7 +589,7 @@ app.use((req, res, next) => {
         res.cookie(CSRF_COOKIE_NAME, token, {
             httpOnly: false, // JavaScript에서 읽을 수 있어야 함
             sameSite: "strict",
-            secure: process.env.NODE_ENV === "production",
+            secure: true,  // 보안 개선: 항상 HTTPS 요구
             maxAge: SESSION_TTL_MS
         });
     }
@@ -602,10 +697,11 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 
         const sessionId = createSession(user);
 
+        // 보안 개선: 쿠키 보안 설정 강화
         res.cookie(SESSION_COOKIE_NAME, sessionId, {
             httpOnly: true,
-            sameSite: "lax",
-            secure: process.env.NODE_ENV === "production",
+            sameSite: "strict",  // CSRF 방어 강화
+            secure: true,  // 항상 HTTPS 요구 (개발 환경은 proxy 사용)
             maxAge: SESSION_TTL_MS
         });
 
@@ -614,7 +710,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
         res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
             httpOnly: false,
             sameSite: "strict",
-            secure: process.env.NODE_ENV === "production",
+            secure: true,
             maxAge: SESSION_TTL_MS
         });
 
@@ -623,11 +719,11 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
             user: {
                 id: user.id,
                 username: user.username
-            },
-            encryptionSalt: user.encryption_salt
+            }
+            // 보안 개선: encryptionSalt는 별도 API로 요청 시에만 제공
         });
     } catch (error) {
-        console.error("POST /api/auth/login 오류:", error);
+        logError("POST /api/auth/login", error);
         res.status(500).json({ error: "로그인 처리 중 오류가 발생했습니다." });
     }
 });
@@ -670,8 +766,10 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
         return res.status(400).json({ error: "아이디는 3~64자 사이로 입력해 주세요." });
     }
 
-    if (password.length < 6) {
-        return res.status(400).json({ error: "비밀번호는 6자 이상으로 입력해 주세요." });
+    // 보안 개선: 비밀번호 강도 검증
+    const passwordValidation = validatePasswordStrength(password);
+    if (!passwordValidation.valid) {
+        return res.status(400).json({ error: passwordValidation.error });
     }
 
     try {
@@ -718,10 +816,11 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
         // 바로 로그인 상태로 만들어 주기 (세션 생성)
         const sessionId = createSession(user);
 
+        // 보안 개선: 쿠키 보안 설정 강화
         res.cookie(SESSION_COOKIE_NAME, sessionId, {
             httpOnly: true,
-            sameSite: "lax",
-            secure: process.env.NODE_ENV === "production",
+            sameSite: "strict",  // CSRF 방어 강화
+            secure: true,  // 항상 HTTPS 요구
             maxAge: SESSION_TTL_MS
         });
 
@@ -730,7 +829,7 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
         res.cookie(CSRF_COOKIE_NAME, newCsrfToken, {
             httpOnly: false,
             sameSite: "strict",
-            secure: process.env.NODE_ENV === "production",
+            secure: true,
             maxAge: SESSION_TTL_MS
         });
 
@@ -742,7 +841,7 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
             }
         });
     } catch (error) {
-        console.error("POST /api/auth/register 오류:", error);
+        logError("POST /api/auth/register", error);
         return res.status(500).json({ error: "회원가입 처리 중 오류가 발생했습니다." });
     }
 });
@@ -832,7 +931,7 @@ app.post("/api/auth/verify-password", authMiddleware, async (req, res) => {
             encryptionSalt: user.encryption_salt
         });
     } catch (error) {
-        console.error("POST /api/auth/verify-password 오류:", error);
+        logError("POST /api/auth/verify-password", error);
         res.status(500).json({ error: "비밀번호 확인 중 오류가 발생했습니다." });
     }
 });
@@ -884,7 +983,7 @@ app.post("/api/collections", authMiddleware, async (req, res) => {
         const collection = await createCollection({ userId, name });
         res.status(201).json(collection);
     } catch (error) {
-        console.error("POST /api/collections 오류:", error);
+        logError("POST /api/collections", error);
         res.status(500).json({ error: "컬렉션을 생성하지 못했습니다." });
     }
 });
@@ -1035,8 +1134,9 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
     const now = new Date();
     const id = generatePageId(now);
     const nowStr = formatDateForDb(now);
-    // 클라이언트에서 content를 전달하면 사용, 아니면 기본값
-    const content = typeof req.body.content === "string" ? req.body.content : "<p></p>";
+    // 보안 개선: 클라이언트에서 content를 전달하면 sanitize 후 사용
+    const rawContent = typeof req.body.content === "string" ? req.body.content : "<p></p>";
+    const content = sanitizeHtmlContent(rawContent);
 	const userId = req.user.id;
 
 	// body에서 parentId / sortOrder 받기 (없으면 루트 + sort_order 0)
@@ -1112,7 +1212,7 @@ app.post("/api/pages", authMiddleware, async (req, res) => {
 
         res.status(201).json(page);
     } catch (error) {
-        console.error("POST /api/pages 오류:", error);
+        logError("POST /api/pages", error);
         res.status(500).json({ error: "페이지 생성 실패." });
     }
 });
@@ -1126,9 +1226,9 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
     const id = req.params.id;
 	const userId = req.user.id;
 
-    // XSS 방지: HTML 태그 제거
+    // 보안 개선: XSS 방지 - 제목과 내용 모두 sanitize
     const titleFromBody = typeof req.body.title === "string" ? sanitizeInput(req.body.title.trim()) : null;
-    const contentFromBody = typeof req.body.content === "string" ? req.body.content : null;
+    const contentFromBody = typeof req.body.content === "string" ? sanitizeHtmlContent(req.body.content) : null;
     const isEncryptedFromBody = typeof req.body.isEncrypted === "boolean" ? req.body.isEncrypted : null;
 
     if (!titleFromBody && !contentFromBody && isEncryptedFromBody === null) {
