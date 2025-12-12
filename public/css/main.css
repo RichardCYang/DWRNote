@@ -498,10 +498,6 @@ body {
     background-color: #1e4d4a;
 }
 
-#logout-btn {
-    min-width: 85px;
-}
-
 .mode-toggle-btn {
     display: flex;
     align-items: center;
@@ -635,6 +631,21 @@ body {
 
 .sidebar-new-collection-button:hover {
     background-color: #1e4d4a;
+}
+
+.sidebar-logout-button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background-color: #9b5555;
+    color: #ffffff;
+    font-weight: 500;
+}
+
+.sidebar-logout-button:hover {
+    background-color: #7d4444;
 }
 
 .sidebar-new-page-button {
