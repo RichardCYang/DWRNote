@@ -915,6 +915,11 @@ async function loadPage(id) {
         }
 
         renderPageList();
+
+        // 모바일에서 페이지 로드 후 사이드바 닫기
+        if (window.innerWidth <= 768) {
+            closeSidebar();
+        }
     } catch (error) {
         console.error("단일 페이지 로드 오류:", error);
         showErrorInEditor("페이지를 불러오지 못했다: " + error.message);
@@ -1417,6 +1422,11 @@ function openSettingsModal() {
         return;
     }
 
+    // 모바일에서 설정 열 때 사이드바 닫기
+    if (window.innerWidth <= 768) {
+        closeSidebar();
+    }
+
     // 현재 사용자 정보 표시
     if (usernameEl && currentUser) {
         usernameEl.textContent = currentUser.username || "-";
@@ -1493,6 +1503,47 @@ function bindSettingsModal() {
     }
 }
 
+function openSidebar() {
+    const sidebar = document.querySelector(".sidebar");
+    const overlay = document.querySelector("#sidebar-overlay");
+
+    if (sidebar) {
+        sidebar.classList.add("open");
+    }
+    if (overlay) {
+        overlay.classList.add("visible");
+    }
+}
+
+function closeSidebar() {
+    const sidebar = document.querySelector(".sidebar");
+    const overlay = document.querySelector("#sidebar-overlay");
+
+    if (sidebar) {
+        sidebar.classList.remove("open");
+    }
+    if (overlay) {
+        overlay.classList.remove("visible");
+    }
+}
+
+function bindMobileSidebar() {
+    const mobileMenuBtn = document.querySelector("#mobile-menu-btn");
+    const overlay = document.querySelector("#sidebar-overlay");
+
+    if (mobileMenuBtn) {
+        mobileMenuBtn.addEventListener("click", () => {
+            openSidebar();
+        });
+    }
+
+    if (overlay) {
+        overlay.addEventListener("click", () => {
+            closeSidebar();
+        });
+    }
+}
+
 function initEvent() {
     document.addEventListener("click", (event) => {
     	// 글자 색상 선택 드롭다운 메뉴 바깥을 클릭하면 드롭다운 닫기 구현
@@ -1550,6 +1601,7 @@ function init() {
     bindSlashKeyHandlers();
 	bindLogoutButton();
     bindSettingsModal();
+    bindMobileSidebar();
     fetchAndDisplayCurrentUser();
     fetchCollections().then(() => fetchPageList());
 }
