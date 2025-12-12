@@ -150,6 +150,26 @@
                             </div>
                         </div>
 
+                        <!-- 폰트 패밀리 드롭다운 -->
+                        <div class="toolbar-color-dropdown" data-role="font-dropdown">
+                            <!-- 드롭다운 토글 버튼 -->
+                            <button
+                                type="button"
+                                class="toolbar-button"
+                                data-command="toggleFontDropdown"
+                                title="폰트 변경"
+                                aria-label="폰트 변경"
+                            >
+                                <i class="fa-solid fa-text-height"></i>
+                                <i class="fa-solid fa-caret-down caret-icon"></i>
+                            </button>
+
+                            <!-- 실제 폰트 리스트 메뉴 -->
+                            <div class="toolbar-font-menu" data-font-menu hidden>
+                                <!-- 폰트 옵션은 JavaScript에서 동적으로 생성됨 -->
+                            </div>
+                        </div>
+
                         <span class="toolbar-separator"></span>
 
                         <button type="button" data-command="h1">H1</button>

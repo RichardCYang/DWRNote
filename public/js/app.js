@@ -5,6 +5,9 @@ import { TextAlign } from "https://esm.sh/@tiptap/extension-text-align@2.0.0-bet
 import Color from "https://esm.sh/@tiptap/extension-color@2.0.0-beta.209";
 import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.0.0-beta.209";
 
+// 폰트 패밀리(FontFamily) 익스텐션 ESM import
+import FontFamily from "https://esm.sh/@tiptap/extension-font-family@2.0.0-beta.209";
+
 // 전역 Tiptap 번들에서 Editor / StarterKit 가져오기
 // index.html 에서 tiptap-for-browser.min.js 우선 로딩 필요
 const Editor = Tiptap.Core.Editor;
@@ -70,11 +73,43 @@ let currentCollectionId = null;
 let expandedCollections = new Set();
 let colorDropdownElement = null;
 let colorMenuElement = null;
+let fontDropdownElement = null;
+let fontMenuElement = null;
 let isWriteMode = false;
 let currentUser = null;
 let userSettings = {
     defaultMode: 'read' // 'read' or 'write'
 };
+
+// 시스템 폰트 리스트 (운영체제에 일반적으로 설치된 폰트들)
+const SYSTEM_FONTS = [
+    { name: "기본 폰트", value: null },
+    { name: "Arial", value: "Arial, sans-serif" },
+    { name: "Arial Black", value: "'Arial Black', sans-serif" },
+    { name: "Comic Sans MS", value: "'Comic Sans MS', cursive" },
+    { name: "Courier New", value: "'Courier New', monospace" },
+    { name: "Georgia", value: "Georgia, serif" },
+    { name: "Impact", value: "Impact, sans-serif" },
+    { name: "Tahoma", value: "Tahoma, sans-serif" },
+    { name: "Times New Roman", value: "'Times New Roman', serif" },
+    { name: "Trebuchet MS", value: "'Trebuchet MS', sans-serif" },
+    { name: "Verdana", value: "Verdana, sans-serif" },
+    // 한글 폰트
+    { name: "맑은 고딕", value: "'Malgun Gothic', sans-serif" },
+    { name: "돋움", value: "Dotum, sans-serif" },
+    { name: "굴림", value: "Gulim, sans-serif" },
+    { name: "바탕", value: "Batang, serif" },
+    { name: "궁서", value: "Gungsuh, serif" },
+    // macOS 폰트
+    { name: "Apple SD Gothic Neo", value: "'Apple SD Gothic Neo', sans-serif" },
+    { name: "Helvetica", value: "Helvetica, sans-serif" },
+    { name: "SF Pro", value: "'SF Pro Display', sans-serif" },
+    // 크로스 플랫폼 폰트
+    { name: "Segoe UI", value: "'Segoe UI', sans-serif" },
+    { name: "Roboto", value: "Roboto, sans-serif" },
+    { name: "Noto Sans", value: "'Noto Sans', sans-serif" },
+    { name: "Noto Sans KR", value: "'Noto Sans KR', sans-serif" }
+];
 
 // 슬래시(/) 명령 블록 메뉴 관련 상태
 const SLASH_ITEMS = [
@@ -379,6 +414,10 @@ function initEditor() {
             // 텍스트 색상 기능을 위한 TextStyle / Color 익스텐션
             TextStyle,
             Color,
+            // 폰트 패밀리 기능
+            FontFamily.configure({
+                types: ["textStyle"],
+            }),
         ],
         content: "<p>불러오는 중...</p>",
         onSelectionUpdate() {
@@ -493,6 +532,32 @@ function bindToolbar() {
         ? colorDropdownElement.querySelector("[data-color-menu]")
         : null;
 
+    // 폰트 드롭다운 / 메뉴 DOM 캐시
+    fontDropdownElement = toolbar.querySelector("[data-role='font-dropdown']");
+    fontMenuElement = fontDropdownElement
+        ? fontDropdownElement.querySelector("[data-font-menu]")
+        : null;
+
+    // 폰트 드롭다운 메뉴에 폰트 옵션 동적 생성
+    if (fontMenuElement) {
+        fontMenuElement.innerHTML = "";
+        SYSTEM_FONTS.forEach((font) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "color-option";
+            button.dataset.command = "setFont";
+            if (font.value) {
+                button.dataset.fontFamily = font.value;
+            } else {
+                button.dataset.fontFamily = "";
+            }
+            button.title = font.name;
+            button.style.fontFamily = font.value || "inherit";
+            button.textContent = font.name;
+            fontMenuElement.appendChild(button);
+        });
+    }
+
     toolbar.addEventListener("click", (event) => {
         const button = event.target.closest("button[data-command]");
         if (!button || !editor) {
@@ -501,8 +566,9 @@ function bindToolbar() {
 
         const command = button.getAttribute("data-command");
         const colorValue = button.getAttribute("data-color");
+        const fontFamilyValue = button.getAttribute("data-font-family");
 
-        // 드롭다운 열기/닫기
+        // 색상 드롭다운 열기/닫기
         if (command === "toggleColorDropdown") {
             if (!colorMenuElement || !colorDropdownElement) {
                 return;
@@ -516,6 +582,25 @@ function bindToolbar() {
             } else {
                 colorMenuElement.removeAttribute("hidden");
                 colorDropdownElement.classList.add("open");
+            }
+
+            return;
+        }
+
+        // 폰트 드롭다운 열기/닫기
+        if (command === "toggleFontDropdown") {
+            if (!fontMenuElement || !fontDropdownElement) {
+                return;
+            }
+
+            const isOpen = !fontMenuElement.hasAttribute("hidden");
+
+            if (isOpen) {
+                fontMenuElement.setAttribute("hidden", "");
+                fontDropdownElement.classList.remove("open");
+            } else {
+                fontMenuElement.removeAttribute("hidden");
+                fontDropdownElement.classList.add("open");
             }
 
             return;
@@ -542,6 +627,25 @@ function bindToolbar() {
             if (colorMenuElement && colorDropdownElement) {
                 colorMenuElement.setAttribute("hidden", "");
                 colorDropdownElement.classList.remove("open");
+            }
+
+            updateToolbarState();
+            return;
+        }
+
+        // 폰트 선택 (드롭다운 내부 버튼)
+        if (command === "setFont") {
+            if (fontFamilyValue === "") {
+                // 기본 폰트로 초기화
+                editor.chain().focus().unsetFontFamily().run();
+            } else {
+                editor.chain().focus().setFontFamily(fontFamilyValue).run();
+            }
+
+            // 폰트 선택 후 드롭다운 닫기
+            if (fontMenuElement && fontDropdownElement) {
+                fontMenuElement.setAttribute("hidden", "");
+                fontDropdownElement.classList.remove("open");
             }
 
             updateToolbarState();
@@ -2418,6 +2522,23 @@ function initEvent() {
         if (!colorMenuElement.hasAttribute("hidden")) {
             colorMenuElement.setAttribute("hidden", "");
             colorDropdownElement.classList.remove("open");
+        }
+    });
+
+    document.addEventListener("click", (event) => {
+    	// 폰트 드롭다운 메뉴 바깥을 클릭하면 드롭다운 닫기 구현
+        // 폰트 드롭다운 요소가 아직 준비되지 않은 경우
+        if (!fontDropdownElement || !fontMenuElement)
+            return;
+
+        // 드롭다운 내부를 클릭한 경우는 무시
+        if (fontDropdownElement.contains(event.target))
+            return;
+
+        // 폰트 드롭다운 메뉴 열려 있으면 닫기
+        if (!fontMenuElement.hasAttribute("hidden")) {
+            fontMenuElement.setAttribute("hidden", "");
+            fontDropdownElement.classList.remove("open");
         }
     });
 

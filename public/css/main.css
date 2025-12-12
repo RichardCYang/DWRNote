@@ -500,6 +500,38 @@ body {
     font-size: 14px;
 }
 
+/* 폰트 선택 메뉴 */
+.toolbar-font-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    padding: 4px;
+    background-color: #faf8f3;
+    border: 1px solid #d4cfc4;
+    border-radius: 3px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 20;
+    min-width: 160px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.toolbar-font-menu[hidden] {
+    display: none;
+}
+
+.toolbar-font-menu .color-option {
+    padding: 6px 10px;
+    border-radius: 2px;
+    text-align: left;
+    white-space: nowrap;
+    font-size: 13px;
+}
+
 .toolbar-separator {
     width: 1px;
     height: 18px;
