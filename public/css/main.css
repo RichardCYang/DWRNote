@@ -9,11 +9,11 @@ body {
     margin: 0;
     padding: 0;
     height: 100%;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
 }
 
 body {
-    background-color: #f5f5f7;
+    background-color: #f5f2ed;
 }
 
 .app {
@@ -26,15 +26,16 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 16px;
-    border-bottom: 1px solid #e5e7eb;
-    background-color: #ffffff;
+    padding: 10px 20px;
+    border-bottom: 1px solid #d4cfc4;
+    background-color: #faf8f3;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .app-header-left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
 }
 
 .app-logo {
@@ -43,7 +44,9 @@ body {
 
 .app-title {
     font-weight: 600;
-    font-size: 16px;
+    font-size: 17px;
+    color: #1a1a1a;
+    letter-spacing: -0.02em;
 }
 
 .app-header-right {
@@ -63,8 +66,8 @@ body {
 /* 사이드바 */
 .sidebar {
     width: 260px;
-    border-right: 1px solid #e5e7eb;
-    background-color: #f5f7fb;
+    border-right: 1px solid #d4cfc4;
+    background-color: #ebe8e1;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -75,10 +78,11 @@ body {
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid #d4cfc4;
     padding: 12px 16px;
     box-sizing: border-box;
     height: 64px;
+    background-color: #e6e3db;
 }
 
 .editor-header {
@@ -93,10 +97,9 @@ body {
     flex: 1;
     font-size: 15px;
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: #94a3b8;
-    /* page-title-input과 동일한 내부 높이 */
+    color: #5a6169;
     padding: 6px 12px;
     line-height: 1.5;
     box-sizing: border-box;
@@ -112,7 +115,7 @@ body {
 .sidebar-main {
     flex: 1;
     overflow-y: auto;
-    padding: 4px 6px 10px 6px;
+    padding: 6px 8px 12px 8px;
 }
 
 .page-list {
@@ -127,36 +130,36 @@ body {
     padding: 0;
 }
 
-/* 컬렉션 카드 스타일: 더 심플하게, 노션 느낌으로 */
+/* 컬렉션 카드 스타일: 한국식 미니멀 */
 .collection-item {
-    margin: 2px 0 2px 0;
-    border-radius: 8px;
+    margin: 3px 0;
+    border-radius: 3px;
     border: none;
     background-color: transparent;
     box-shadow: none;
-    transition: background-color 0.12s ease;
+    transition: background-color 0.1s ease;
 }
 
 .collection-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 12px;
+    padding: 6px 10px;
     cursor: pointer;
-    border-radius: 8px 8px 0 0;
+    border-radius: 3px;
     gap: 8px;
     background: transparent;
 }
 
 .collection-header:hover {
-    background-color: transparent;
+    background-color: #ddd9d0;
 }
 
 .collection-actions {
     display: flex;
     align-items: center;
     gap: 6px;
-    position: relative; /* dropdown 위치 기준 */
+    position: relative;
 }
 
 .collection-menu-btn,
@@ -164,46 +167,46 @@ body {
     border: none;
     background: none;
     padding: 4px 6px;
-    border-radius: 6px;
+    border-radius: 3px;
     cursor: pointer;
-    color: #4b5563;
+    color: #4a545e;
 }
 
 .collection-menu-btn:hover,
 .page-menu-btn:hover {
-    background-color: #e5e7eb;
-    color: #111827;
+    background-color: #d4cfc4;
+    color: #1a1a1a;
 }
 
 .collection-add-page-btn {
     border: none;
     background: none;
     padding: 4px 6px;
-    border-radius: 6px;
+    border-radius: 3px;
     cursor: pointer;
-    color: #4b5563;
+    color: #4a545e;
 }
 
 .collection-add-page-btn:hover {
-    background-color: #e5e7eb;
-    color: #111827;
+    background-color: #d4cfc4;
+    color: #1a1a1a;
 }
 
 .dropdown-menu {
     position: absolute;
-    left: calc(100% + 6px); /* 햄버거 버튼 오른쪽에 표시 */
+    left: calc(100% + 6px);
     top: 0;
-    background-color: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+    background-color: #faf8f3;
+    border: 1px solid #d4cfc4;
+    border-radius: 3px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     min-width: 140px;
     z-index: 200;
     padding: 4px 0;
 }
 
 .page-menu-wrapper {
-    position: relative; /* 페이지 메뉴 기준 */
+    position: relative;
     display: flex;
     align-items: center;
 }
@@ -221,12 +224,12 @@ body {
     background: none;
     padding: 8px 12px;
     font-size: 13px;
-    color: #374151;
+    color: #2d2d2d;
     cursor: pointer;
 }
 
 .dropdown-menu button:hover {
-    background-color: #f3f4f6;
+    background-color: #ebe8e1;
 }
 
 .collection-title {
@@ -235,7 +238,7 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
-    color: #1f2937;
+    color: #2d2d2d;
 }
 
 .collection-toggle {
@@ -243,7 +246,8 @@ body {
     align-items: center;
     justify-content: center;
     width: 14px;
-    transition: transform 0.15s ease;
+    transition: transform 0.12s ease;
+    color: #5a6169;
 }
 
 .collection-toggle.expanded {
@@ -252,7 +256,7 @@ body {
 
 .collection-meta {
     font-size: 12px;
-    color: #a0aec0;
+    color: #6b7280;
 }
 
 .collection-empty {
@@ -262,7 +266,7 @@ body {
     border-top: 1px solid transparent;
 }
 
-/* 페이지 항목: 미니멀 라운드와 은은한 호버 */
+/* 페이지 항목: 한국식 미니멀 */
 .page-list-item {
     padding: 7px 12px 7px 32px;
     cursor: pointer;
@@ -270,28 +274,30 @@ body {
     flex-direction: column;
     gap: 2px;
     font-size: 13px;
-    border-radius: 6px;
+    border-radius: 3px;
     margin: 2px 0;
-    transition: background-color 0.12s ease;
+    transition: background-color 0.1s ease;
     background: transparent;
 }
 
 .page-list-item:hover {
-    background-color: transparent;
+    background-color: #ddd9d0;
 }
 
 .page-list-item.active {
-    background-color: transparent;
+    background-color: #d4cfc4;
+    border-left: 2px solid #2d5f5d;
+    padding-left: 30px;
 }
 
 .page-list-item-title {
     font-weight: 500;
-    color: #1f2937;
+    color: #2d2d2d;
 }
 
 .page-list-item-date {
     font-size: 11px;
-    color: #94a3b8;
+    color: #6b7280;
 }
 
 /* 에디터 영역 */
@@ -311,6 +317,7 @@ body {
     background-color: transparent;
     line-height: 1.5;
     box-sizing: border-box;
+    color: #1a1a1a;
 }
 
 .editor-actions {
@@ -323,33 +330,35 @@ body {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    background-color: #ffffff;
+    background-color: #faf8f3;
 }
 
 .editor-toolbar {
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 6px 8px;
-    border-bottom: 1px solid #e5e7eb;
-    background-color: #f9fafb;
+    padding: 6px 10px;
+    border-bottom: 1px solid #d4cfc4;
+    background-color: #f5f2ed;
 }
 
 .editor-toolbar button {
     border: none;
     background: none;
-    padding: 4px 6px;
-    border-radius: 4px;
+    padding: 5px 7px;
+    border-radius: 3px;
     cursor: pointer;
     font-size: 13px;
+    color: #4a545e;
 }
 
 .editor-toolbar button:hover {
-    background-color: #e5e7eb;
+    background-color: #e6e3db;
+    color: #1a1a1a;
 }
 
 .editor-toolbar button.active {
-    background-color: #2563eb;
+    background-color: #2d5f5d;
     color: #ffffff;
 }
 
@@ -359,16 +368,14 @@ body {
     display: inline-block;
 }
 
-/* 드롭다운 토글 버튼: 아이콘 두 개(폰트 + 아래 화살표)를 수평 정렬 */
 .toolbar-color-dropdown > .toolbar-button {
     display: inline-flex;
     align-items: center;
     gap: 4px;
 }
 
-/* 화살표 아이콘 회전 애니메이션용 클래스 */
 .toolbar-color-dropdown .caret-icon {
-    transition: transform 0.15s ease-out;
+    transition: transform 0.12s ease-out;
 }
 
 .toolbar-color-dropdown.open .caret-icon {
@@ -382,36 +389,32 @@ body {
     left: 0;
     margin-top: 4px;
     padding: 4px;
-    background-color: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+    background-color: #faf8f3;
+    border: 1px solid #d4cfc4;
+    border-radius: 3px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     display: flex;
     gap: 4px;
     z-index: 20;
 }
 
-/* hidden 속성이 있을 때는 완전히 숨김 */
 .toolbar-color-menu[hidden] {
     display: none;
 }
 
-/* 각 색상 버튼 */
 .toolbar-color-menu .color-option {
     padding: 4px;
-    border-radius: 9999px;
+    border-radius: 2px;
 }
 
-/* 색상 동그라미 */
 .toolbar-color-menu .color-swatch {
     display: inline-block;
     width: 14px;
     height: 14px;
-    border-radius: 9999px;
-    border: 1px solid #e5e7eb;
+    border-radius: 2px;
+    border: 1px solid #d4cfc4;
 }
 
-/* 색상 초기화(지우개) 버튼 */
 .toolbar-color-menu .color-option--clear i {
     font-size: 14px;
 }
@@ -419,81 +422,82 @@ body {
 .toolbar-separator {
     width: 1px;
     height: 18px;
-    background-color: #e5e7eb;
+    background-color: #d4cfc4;
 }
 
 .editor {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 8px 16px 24px 16px;
+    padding: 12px 20px 32px 20px;
 }
 
-/* 에디터 블록(문단)을 노션의 블록처럼 보이게 하는 스타일 */
+/* 에디터 블록: 한지 느낌 */
 .editor .ProseMirror {
     outline: none;
-    padding: 12px 14px;
+    padding: 16px 18px;
     min-height: 300px;
+    color: #1a1a1a;
+    line-height: 1.7;
 }
 
-/* 각 문단을 하나의 블록처럼 보이게 한다. */
 .editor .ProseMirror p {
-    margin: 0 0 4px 0;
-    padding: 4px 0;
-    border-radius: 4px;
-    transition: background-color 0.12s ease, box-shadow 0.12s ease;
+    margin: 0 0 6px 0;
+    padding: 3px 0;
+    border-radius: 2px;
+    transition: background-color 0.1s ease;
 }
 
-/* 빈 문단도 최소 높이를 가져서 커서를 올리기 쉽도록 한다. */
 .editor .ProseMirror p.is-editor-empty:first-child::before {
     color: #9ca3af;
 }
 
-/* 호버 시 살짝 강조해서 블록 느낌을 준다. */
 .editor .ProseMirror p:hover {
-    background-color: #f3f4f6;
+    background-color: #f0ede7;
 }
 
-/* 버튼 스타일 공통 */
+/* 버튼 스타일: 한국식 절제된 디자인 */
 .primary-button {
 	border: none;
-    border-radius: 6px;
-    padding: 6px 12px;
+    border-radius: 3px;
+    padding: 6px 14px;
     font-size: 13px;
     cursor: pointer;
-    background-color: #2563eb;
+    background-color: #2d5f5d;
     color: #ffffff;
+    font-weight: 500;
 }
 
 .primary-button:hover {
-    background-color: #1d4ed8;
+    background-color: #1e4d4a;
 }
 
 .danger-button {
     border: none;
-    border-radius: 6px;
-    padding: 6px 12px;
+    border-radius: 3px;
+    padding: 6px 14px;
     font-size: 13px;
     cursor: pointer;
-    background-color: #dc2626;
+    background-color: #9b5555;
     color: #ffffff;
+    font-weight: 500;
 }
 
 .danger-button:hover {
-    background-color: #b91c1c;
+    background-color: #7d4444;
 }
 
-/* 슬래시(/) 명령 블록 선택 메뉴 스타일 */
+/* 슬래시 명령 메뉴: 한국식 미니멀 */
 #slash-menu {
     position: fixed;
     z-index: 50;
     width: 260px;
     max-height: 260px;
-    background-color: #ffffff;
-    border-radius: 8px;
-    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15);
-    border: 1px solid #e5e7eb;
-    padding: 6px 4px;
+    background-color: #faf8f3;
+    border-radius: 3px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
+    border: 1px solid #d4cfc4;
+    padding: 6px;
     overflow-y: auto;
     font-size: 13px;
 }
@@ -511,27 +515,27 @@ body {
 .slash-menu-item {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 6px 8px;
-    border-radius: 6px;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 3px;
     cursor: pointer;
 }
 
 .slash-menu-item:hover,
 .slash-menu-item.active {
-    background-color: #eff6ff;
+    background-color: #ebe8e1;
 }
 
 .slash-menu-item-icon {
     width: 24px;
     height: 24px;
-    border-radius: 6px;
-    background-color: #f3f4f6;
+    border-radius: 3px;
+    background-color: #e6e3db;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 11px;
-    color: #4b5563;
+    color: #4a545e;
     margin-top: 2px;
 }
 
@@ -543,7 +547,7 @@ body {
 
 .slash-menu-item-label {
     font-weight: 500;
-    color: #111827;
+    color: #2d2d2d;
 }
 
 .slash-menu-item-desc {
@@ -551,11 +555,11 @@ body {
     color: #6b7280;
 }
 
-/* 사이드바 하단 새 페이지 버튼 전용 스타일 */
+/* 사이드바 하단 버튼: 한국식 절제된 스타일 */
 .sidebar-footer {
-    padding: 12px 16px 16px;
-    border-top: 1px solid #e5e7eb;
-    background-color: #fafafa;
+    padding: 12px 14px 14px;
+    border-top: 1px solid #d4cfc4;
+    background-color: #e6e3db;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -567,21 +571,20 @@ body {
     align-items: center;
     justify-content: center;
     gap: 6px;
-
-    background-color: #fef3c7;
-    color: #92400e;
-    font-weight: 600;
+    background-color: #2d5f5d;
+    color: #ffffff;
+    font-weight: 500;
 }
 
 .sidebar-new-collection-button:hover {
-    background-color: #fde68a;
+    background-color: #1e4d4a;
 }
 
 .sidebar-new-page-button {
     display: none;
 }
 
-/* 반응형 간단 대응 */
+/* 반응형 */
 @media (max-width: 768px) {
     .sidebar {
         display: none;
