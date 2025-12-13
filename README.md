@@ -3,6 +3,11 @@
 셀프 호스팅 가능한 웹 기반 노트 애플리케이션
 
 ---
+
+**한국어** | **[English](README.en.md)**
+
+---
+
 <img src="./example.png" width="100%" title="NTEOK_Screenshot"/>
 
 ## 개요
