@@ -49,6 +49,9 @@ import {
     closeTotpSetupModal,
     bindTotpModals
 } from './totp-manager.js';
+import {
+    bindAccountManagementButtons
+} from './account-manager.js';
 
 // ==================== Global State ====================
 const appState = {
@@ -815,6 +818,7 @@ async function init() {
     bindEncryptPermissionModal();
     bindMobileSidebar();
     bindTotpModals();
+    bindAccountManagementButtons();
 
     // 데이터 로드
     await fetchAndDisplayCurrentUser();

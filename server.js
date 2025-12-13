@@ -1001,6 +1001,68 @@ app.post("/api/auth/logout", (req, res) => {
 });
 
 /**
+ * 계정 삭제
+ * DELETE /api/auth/account
+ * body: { password: string, confirmText: string }
+ */
+app.delete("/api/auth/account", authMiddleware, async (req, res) => {
+    const { password, confirmText } = req.body || {};
+
+    // 입력 검증
+    if (typeof password !== "string" || !password.trim()) {
+        return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
+    }
+
+    if (confirmText !== "계정 삭제") {
+        return res.status(400).json({ error: '확인 문구를 정확히 입력해 주세요. "계정 삭제"를 입력하세요.' });
+    }
+
+    try {
+        // 사용자 정보 조회
+        const [rows] = await pool.execute(
+            `SELECT id, username, password_hash FROM users WHERE id = ?`,
+            [req.user.id]
+        );
+
+        if (!rows.length) {
+            return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+        }
+
+        const user = rows[0];
+
+        // 비밀번호 검증
+        const ok = await bcrypt.compare(password, user.password_hash);
+        if (!ok) {
+            console.warn("계정 삭제 시도 - 비밀번호 불일치:", req.user.username);
+            return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
+        }
+
+        // 계정 삭제 (CASCADE로 연관 데이터 자동 삭제)
+        await pool.execute(`DELETE FROM users WHERE id = ?`, [req.user.id]);
+
+        console.log(`계정 삭제 완료: 사용자 ID ${req.user.id} (${req.user.username})`);
+
+        // 세션 무효화
+        const session = getSessionFromRequest(req);
+        if (session) {
+            sessions.delete(session.id);
+        }
+
+        // 세션 쿠키 클리어
+        res.clearCookie(SESSION_COOKIE_NAME, {
+            httpOnly: true,
+            sameSite: "strict",
+            secure: IS_PRODUCTION
+        });
+
+        res.json({ ok: true });
+    } catch (error) {
+        logError("DELETE /api/auth/account", error);
+        res.status(500).json({ error: "계정 삭제 중 오류가 발생했습니다." });
+    }
+});
+
+/**
  * 회원가입
  * POST /api/auth/register
  * body: { username: string, password: string }
