@@ -8,6 +8,7 @@ const rateLimit = require("express-rate-limit");
 const DOMPurify = require("isomorphic-dompurify");
 const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
+const Y = require("yjs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -795,6 +796,186 @@ const totpLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
 });
+
+// SSE 연결 레이트 리밋
+const sseConnectionLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15분
+    max: 50, // 사용자당 최대 50개 연결
+    message: { error: "SSE 연결 제한 초과" },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.user?.id?.toString() || 'anonymous'
+});
+
+/**
+ * ==================== SSE 및 실시간 동기화 ====================
+ */
+
+// SSE 연결 풀
+const sseConnections = {
+    pages: new Map(), // pageId -> Set<{res, userId, username, color}>
+    collections: new Map() // collectionId -> Set<{res, userId, permission}>
+};
+
+// Yjs 문서 캐시 (메모리 관리)
+const yjsDocuments = new Map(); // pageId -> {ydoc, lastAccess, saveTimeout}
+
+// 사용자 색상 (협업 UI용, 10가지 색상 순환)
+const USER_COLORS = [
+    '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
+    '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B195', '#C06C84'
+];
+
+/**
+ * 사용자 ID 기반 색상 할당
+ */
+function getUserColor(userId) {
+    return USER_COLORS[userId % USER_COLORS.length];
+}
+
+/**
+ * SSE 연결 정리 (30분 비활성 시)
+ */
+function cleanupInactiveConnections() {
+    const now = Date.now();
+    const TIMEOUT = 30 * 60 * 1000; // 30분
+
+    yjsDocuments.forEach((doc, pageId) => {
+        if (now - doc.lastAccess > TIMEOUT) {
+            // 마지막 저장 후 메모리에서 제거
+            saveYjsDocToDatabase(pageId, doc.ydoc).catch(err => {
+                console.error(`[SSE] 비활성 문서 저장 실패 (${pageId}):`, err);
+            });
+            yjsDocuments.delete(pageId);
+        }
+    });
+}
+
+// 10분마다 비활성 연결 정리
+setInterval(cleanupInactiveConnections, 10 * 60 * 1000);
+
+/**
+ * Yjs 문서를 데이터베이스에 저장
+ */
+async function saveYjsDocToDatabase(pageId, ydoc) {
+    try {
+        const yXmlFragment = ydoc.getXmlFragment('prosemirror');
+        const yMetadata = ydoc.getMap('metadata');
+
+        // 메타데이터 추출
+        const title = yMetadata.get('title') || '제목 없음';
+        const icon = yMetadata.get('icon') || null;
+        const sortOrder = yMetadata.get('sortOrder') || 0;
+        const parentId = yMetadata.get('parentId') || null;
+
+        // HTML 추출 (간단한 방식)
+        const content = extractHtmlFromYDoc(ydoc);
+
+        await pool.execute(
+            `UPDATE pages
+             SET title = ?, content = ?, icon = ?, sort_order = ?, parent_id = ?, updated_at = NOW()
+             WHERE id = ?`,
+            [title, content, icon, sortOrder, parentId, pageId]
+        );
+    } catch (error) {
+        console.error(`[SSE] 페이지 저장 실패 (${pageId}):`, error);
+        throw error;
+    }
+}
+
+/**
+ * Y.XmlFragment를 HTML로 변환 (간단한 구현)
+ * 실제 운영 시 ProseMirror DOMSerializer 사용 권장
+ */
+function extractHtmlFromYDoc(ydoc) {
+    const yXmlFragment = ydoc.getXmlFragment('prosemirror');
+    // 초기 HTML이 메타데이터에 저장되어 있으면 사용
+    const yMetadata = ydoc.getMap('metadata');
+    const initialHtml = yMetadata.get('initialHtml');
+
+    if (initialHtml) {
+        return initialHtml;
+    }
+
+    // 기본 HTML 반환 (Yjs 변경사항이 적용되지 않을 수 있음)
+    return '<p>실시간 협업 중...</p>';
+}
+
+/**
+ * Yjs 문서 로드 또는 생성
+ */
+async function loadOrCreateYjsDoc(pageId) {
+    if (yjsDocuments.has(pageId)) {
+        const doc = yjsDocuments.get(pageId);
+        doc.lastAccess = Date.now();
+        return doc.ydoc;
+    }
+
+    // 데이터베이스에서 페이지 로드
+    const [rows] = await pool.execute(
+        'SELECT title, content, icon, sort_order, parent_id FROM pages WHERE id = ?',
+        [pageId]
+    );
+
+    const ydoc = new Y.Doc();
+    const yXmlFragment = ydoc.getXmlFragment('prosemirror');
+    const yMetadata = ydoc.getMap('metadata');
+
+    if (rows.length > 0) {
+        const page = rows[0];
+        yMetadata.set('title', page.title || '제목 없음');
+        yMetadata.set('icon', page.icon || null);
+        yMetadata.set('sortOrder', page.sort_order || 0);
+        yMetadata.set('parentId', page.parent_id || null);
+        yMetadata.set('initialHtml', page.content || '<p></p>');
+    }
+
+    yjsDocuments.set(pageId, {
+        ydoc,
+        lastAccess: Date.now(),
+        saveTimeout: null
+    });
+
+    return ydoc;
+}
+
+/**
+ * SSE 브로드캐스트 (페이지)
+ */
+function broadcastToPage(pageId, event, data, excludeUserId = null) {
+    const connections = sseConnections.pages.get(pageId);
+    if (!connections) return;
+
+    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+    connections.forEach(conn => {
+        if (excludeUserId && conn.userId === excludeUserId) return;
+        try {
+            conn.res.write(message);
+        } catch (error) {
+            console.error(`[SSE] 브로드캐스트 실패 (userId: ${conn.userId}):`, error);
+        }
+    });
+}
+
+/**
+ * SSE 브로드캐스트 (컬렉션)
+ */
+function broadcastToCollection(collectionId, event, data, excludeUserId = null) {
+    const connections = sseConnections.collections.get(collectionId);
+    if (!connections) return;
+
+    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+    connections.forEach(conn => {
+        if (excludeUserId && conn.userId === excludeUserId) return;
+        try {
+            conn.res.write(message);
+        } catch (error) {
+            console.error(`[SSE] 브로드캐스트 실패 (userId: ${conn.userId}):`, error);
+        }
+    });
+}
 
 /**
  * 미들웨어 설정
@@ -1637,6 +1818,23 @@ app.put("/api/pages/:id", authMiddleware, async (req, res) => {
 
         console.log("PUT /api/pages/:id 수정 완료:", id);
 
+        // 실시간 메타데이터 변경 브로드캐스트
+        if (titleFromBody && titleFromBody !== existing.title) {
+            broadcastToCollection(existing.collection_id, 'metadata-change', {
+                pageId: id,
+                field: 'title',
+                value: newTitle
+            }, userId);
+        }
+
+        if (iconFromBody !== undefined && newIcon !== existing.icon) {
+            broadcastToCollection(existing.collection_id, 'metadata-change', {
+                pageId: id,
+                field: 'icon',
+                value: newIcon
+            }, userId);
+        }
+
         res.json(page);
     } catch (error) {
         logError("PUT /api/pages/:id", error);
@@ -2051,6 +2249,220 @@ app.get("/api/share-links/:token", async (req, res) => {
     } catch (error) {
         logError("GET /api/share-links/:token", error);
         res.status(500).json({ error: "링크 정보 조회 중 오류가 발생했습니다." });
+    }
+});
+
+// ============================================================================
+// SSE 실시간 동기화 API
+// ============================================================================
+
+/**
+ * 페이지 실시간 동기화 SSE
+ * GET /api/pages/:pageId/sync
+ */
+app.get('/api/pages/:pageId/sync', sseConnectionLimiter, authMiddleware, async (req, res) => {
+    const pageId = req.params.pageId;
+    const userId = req.user.id;
+    const username = req.user.username;
+
+    try {
+        // 권한 검증 (EDIT 이상, 암호화 페이지 제외)
+        const [rows] = await pool.execute(
+            `SELECT p.id, p.is_encrypted, p.collection_id, c.user_id as collection_owner, cs.permission
+             FROM pages p
+             LEFT JOIN collections c ON p.collection_id = c.id
+             LEFT JOIN collection_shares cs ON c.id = cs.collection_id AND cs.shared_with_user_id = ?
+             WHERE p.id = ? AND p.is_encrypted = 0
+               AND (c.user_id = ? OR cs.permission IN ('EDIT', 'ADMIN'))`,
+            [userId, pageId, userId]
+        );
+
+        if (!rows.length) {
+            return res.status(403).json({ error: '권한이 없거나 암호화된 페이지입니다.' });
+        }
+
+        // SSE 헤더 설정
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no'); // Nginx 버퍼링 비활성화
+        res.flushHeaders();
+
+        // 연결 등록
+        if (!sseConnections.pages.has(pageId)) {
+            sseConnections.pages.set(pageId, new Set());
+        }
+
+        const userColor = getUserColor(userId);
+        const connection = { res, userId, username, color: userColor };
+        sseConnections.pages.get(pageId).add(connection);
+
+        // 초기 Yjs 상태 전송
+        const ydoc = await loadOrCreateYjsDoc(pageId);
+        const stateVector = Y.encodeStateAsUpdate(ydoc);
+        const base64State = Buffer.from(stateVector).toString('base64');
+
+        res.write(`event: init\ndata: ${JSON.stringify({
+            state: base64State,
+            userId,
+            username,
+            color: userColor
+        })}\n\n`);
+
+        // 다른 사용자에게 join 알림
+        broadcastToPage(pageId, 'user-joined', { userId, username, color: userColor }, userId);
+
+        // Keep-alive (30초마다 ping)
+        const pingInterval = setInterval(() => {
+            try {
+                res.write(': ping\n\n');
+            } catch (error) {
+                clearInterval(pingInterval);
+            }
+        }, 30000);
+
+        // 연결 종료 처리
+        req.on('close', async () => {
+            clearInterval(pingInterval);
+            sseConnections.pages.get(pageId)?.delete(connection);
+
+            if (sseConnections.pages.get(pageId)?.size === 0) {
+                sseConnections.pages.delete(pageId);
+                // 마지막 사용자가 나가면 문서 저장
+                try {
+                    await saveYjsDocToDatabase(pageId, ydoc);
+                } catch (error) {
+                    console.error(`[SSE] 연결 종료 시 저장 실패 (${pageId}):`, error);
+                }
+            }
+
+            broadcastToPage(pageId, 'user-left', { userId }, userId);
+        });
+
+    } catch (error) {
+        logError('GET /api/pages/:pageId/sync', error);
+        if (!res.headersSent) {
+            res.status(500).json({ error: '연결 실패' });
+        }
+    }
+});
+
+/**
+ * Yjs 업데이트 수신
+ * POST /api/pages/:pageId/sync-update
+ */
+app.post('/api/pages/:pageId/sync-update',
+    express.raw({ type: 'application/octet-stream', limit: '10mb' }),
+    authMiddleware,
+    async (req, res) => {
+    const pageId = req.params.pageId;
+    const userId = req.user.id;
+
+    try {
+        // 권한 검증
+        const [rows] = await pool.execute(
+            `SELECT p.id FROM pages p
+             LEFT JOIN collections c ON p.collection_id = c.id
+             LEFT JOIN collection_shares cs ON c.id = cs.collection_id AND cs.shared_with_user_id = ?
+             WHERE p.id = ? AND p.is_encrypted = 0
+               AND (c.user_id = ? OR cs.permission IN ('EDIT', 'ADMIN'))`,
+            [userId, pageId, userId]
+        );
+
+        if (!rows.length) {
+            return res.status(403).json({ error: '권한 없음' });
+        }
+
+        // raw body는 이미 Buffer로 파싱됨
+        const updateData = req.body;
+
+        if (!Buffer.isBuffer(updateData)) {
+            console.error('[SSE] 잘못된 데이터 형식:', typeof updateData);
+            return res.status(400).json({ error: '잘못된 데이터 형식' });
+        }
+
+        // Yjs 업데이트 적용
+        const ydoc = await loadOrCreateYjsDoc(pageId);
+        Y.applyUpdate(ydoc, updateData);
+
+        // 다른 사용자에게 브로드캐스트
+        const base64Update = updateData.toString('base64');
+        broadcastToPage(pageId, 'yjs-update', { update: base64Update }, userId);
+
+        // Debounce 저장 (5초)
+        const docData = yjsDocuments.get(pageId);
+        if (docData) {
+            if (docData.saveTimeout) {
+                clearTimeout(docData.saveTimeout);
+            }
+            docData.saveTimeout = setTimeout(() => {
+                saveYjsDocToDatabase(pageId, ydoc).catch(err => {
+                    console.error(`[SSE] Debounce 저장 실패 (${pageId}):`, err);
+                });
+            }, 5000);
+        }
+
+        res.status(200).json({ success: true });
+    } catch (error) {
+        logError('POST /api/pages/:pageId/sync-update', error);
+        res.status(500).json({ error: '업데이트 실패' });
+    }
+});
+
+/**
+ * 컬렉션 메타데이터 동기화 SSE
+ * GET /api/collections/:collectionId/sync
+ */
+app.get('/api/collections/:collectionId/sync', sseConnectionLimiter, authMiddleware, async (req, res) => {
+    const collectionId = req.params.collectionId;
+    const userId = req.user.id;
+
+    try {
+        // 권한 검증
+        const permission = await getCollectionPermission(collectionId, userId);
+        if (!permission || !permission.permission) {
+            return res.status(403).json({ error: '권한 없음' });
+        }
+
+        // SSE 헤더
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders();
+
+        // 연결 등록
+        if (!sseConnections.collections.has(collectionId)) {
+            sseConnections.collections.set(collectionId, new Set());
+        }
+
+        const connection = { res, userId, permission: permission.permission };
+        sseConnections.collections.get(collectionId).add(connection);
+
+        // Keep-alive
+        const pingInterval = setInterval(() => {
+            try {
+                res.write(': ping\n\n');
+            } catch (error) {
+                clearInterval(pingInterval);
+            }
+        }, 30000);
+
+        // 연결 종료
+        req.on('close', () => {
+            clearInterval(pingInterval);
+            sseConnections.collections.get(collectionId)?.delete(connection);
+
+            if (sseConnections.collections.get(collectionId)?.size === 0) {
+                sseConnections.collections.delete(collectionId);
+            }
+        });
+
+    } catch (error) {
+        logError('GET /api/collections/:collectionId/sync', error);
+        if (!res.headersSent) {
+            res.status(500).json({ error: '연결 실패' });
+        }
     }
 });
 

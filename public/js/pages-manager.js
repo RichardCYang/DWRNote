@@ -4,6 +4,7 @@
 
 import { secureFetch } from './ui-utils.js';
 import { escapeHtml, showErrorInEditor } from './ui-utils.js';
+import { startPageSync, stopPageSync } from './sync-manager.js';
 
 // 전역 상태 (app.js에서 전달받음)
 let state = {
@@ -394,6 +395,9 @@ export async function loadPage(id) {
         }
 
         renderPageList();
+
+        // 실시간 동기화 시작 (암호화 페이지는 제외)
+        startPageSync(page.id, page.isEncrypted || false);
 
         // 모바일에서 페이지 로드 후 사이드바 닫기
         if (window.innerWidth <= 768) {

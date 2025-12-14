@@ -52,6 +52,13 @@ import {
 import {
     bindAccountManagementButtons
 } from './account-manager.js';
+import {
+    initSyncManager,
+    startPageSync,
+    stopPageSync,
+    startCollectionSync,
+    stopCollectionSync
+} from './sync-manager.js';
 
 // ==================== Global State ====================
 const appState = {
@@ -819,6 +826,9 @@ async function init() {
 
     // 설정 관리자 초기화
     initSettingsManager(appState);
+
+    // 실시간 동기화 관리자 초기화
+    initSyncManager(appState);
 
     // 이벤트 바인딩
     initEvent();

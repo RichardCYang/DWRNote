@@ -57,9 +57,16 @@ export const MathBlock = Node.create({
 
             let isEditing = false;
             let currentLatex = node.attrs.latex || '';
+            let autoSaveTimeout = null; // 공유 변수로 이동
 
             // 렌더링된 수식을 표시하는 함수
             const showRendered = () => {
+                // 자동 저장 타임아웃 클리어
+                if (autoSaveTimeout) {
+                    clearTimeout(autoSaveTimeout);
+                    autoSaveTimeout = null;
+                }
+
                 wrapper.innerHTML = '';
 
                 const rendered = document.createElement('div');
@@ -80,8 +87,14 @@ export const MathBlock = Node.create({
                 }
 
                 rendered.onclick = () => {
-                    if (!isEditing && editor.isEditable) {
-                        showEditor();
+                    if (!isEditing) {
+                        if (editor.isEditable) {
+                            showEditor();
+                        } else {
+                            console.warn('[MathBlock] 에디터가 읽기 모드입니다');
+                        }
+                    } else {
+                        console.warn('[MathBlock] 이미 편집 모드입니다');
                     }
                 };
 
@@ -91,6 +104,13 @@ export const MathBlock = Node.create({
             // 편집기를 표시하는 함수
             const showEditor = () => {
                 isEditing = true;
+
+                // 기존 자동 저장 타임아웃 클리어
+                if (autoSaveTimeout) {
+                    clearTimeout(autoSaveTimeout);
+                    autoSaveTimeout = null;
+                }
+
                 wrapper.innerHTML = '';
 
                 const editorContainer = document.createElement('div');
@@ -101,6 +121,33 @@ export const MathBlock = Node.create({
                 textarea.placeholder = 'LaTeX 수식을 입력하세요 (예: x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a})';
                 textarea.value = currentLatex;
                 textarea.rows = 5;
+
+                // 실시간 동기화를 위한 입력 이벤트 리스너
+                textarea.oninput = (e) => {
+                    e.stopPropagation();
+
+                    // 입력이 멈춘 후 500ms 후 자동 저장
+                    if (autoSaveTimeout) {
+                        clearTimeout(autoSaveTimeout);
+                    }
+
+                    autoSaveTimeout = setTimeout(() => {
+                        currentLatex = textarea.value;
+
+                        // 에디터에 자동 저장 (속성만 업데이트, DOM 유지)
+                        if (typeof getPos === 'function') {
+                            const pos = getPos();
+                            try {
+                                const tr = editor.view.state.tr;
+                                // setNodeMarkup을 사용하여 노드 타입은 유지하고 속성만 변경
+                                tr.setNodeMarkup(pos, null, { latex: currentLatex });
+                                editor.view.dispatch(tr);
+                            } catch (error) {
+                                console.error('[MathBlock] 자동 저장 실패:', error);
+                            }
+                        }
+                    }, 500);
+                };
 
                 const buttonContainer = document.createElement('div');
                 buttonContainer.className = 'math-button-container';
@@ -133,6 +180,13 @@ export const MathBlock = Node.create({
                     textarea.focus();
                     textarea.selectionStart = textarea.value.length;
                     textarea.selectionEnd = textarea.value.length;
+
+                    // 포커스 확인
+                    setTimeout(() => {
+                        if (document.activeElement !== textarea) {
+                            console.warn('[MathBlock] 포커스 실패, activeElement:', document.activeElement);
+                        }
+                    }, 100);
                 };
 
                 // 즉시 포커스 시도
@@ -223,6 +277,7 @@ export const MathBlock = Node.create({
                     if (updatedNode.type.name !== this.name) {
                         return false;
                     }
+
                     // 편집 중이 아닐 때만 업데이트
                     if (!isEditing) {
                         // updatedNode.attrs.latex가 정의되어 있을 때만 업데이트

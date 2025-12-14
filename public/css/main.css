@@ -1680,3 +1680,60 @@ body {
         margin-bottom: 12px;
     }
 }
+
+/* ============================================================================
+   Real-time Collaboration UI Styles
+   ============================================================================ */
+
+/* 협업 커서 스타일 */
+.collaboration-cursor {
+    position: absolute;
+    pointer-events: none;
+    user-select: none;
+    z-index: 100;
+}
+
+.collaboration-cursor__caret {
+    position: absolute;
+    border-left: 2px solid;
+    border-right: none;
+    height: 1.2em;
+    word-break: normal;
+    pointer-events: none;
+}
+
+.collaboration-cursor__label {
+    position: absolute;
+    top: -1.8em;
+    left: -1px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    color: white;
+    user-select: none;
+}
+
+/* 사용자 알림 애니메이션 */
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOut {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}

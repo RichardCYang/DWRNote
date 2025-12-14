@@ -17,6 +17,8 @@
 		"isomorphic-dompurify": "^2.34.0",
 		"mysql2": "^3.15.3",
 		"qrcode": "^1.5.4",
-		"speakeasy": "^2.0.0"
+		"speakeasy": "^2.0.0",
+		"y-protocols": "^1.0.6",
+		"yjs": "^13.6.18"
 	}
 }
