@@ -452,6 +452,9 @@ body {
     padding: 6px 10px;
     border-bottom: 1px solid #d4cfc4;
     background-color: #f5f2ed;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
 }
 
 .editor-toolbar.visible {
@@ -466,6 +469,8 @@ body {
     cursor: pointer;
     font-size: 13px;
     color: #4a545e;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .editor-toolbar button:hover {
@@ -476,6 +481,24 @@ body {
 .editor-toolbar button.active {
     background-color: #2d5f5d;
     color: #ffffff;
+}
+
+/* 툴바 스크롤바 스타일 */
+.editor-toolbar::-webkit-scrollbar {
+    height: 4px;
+}
+
+.editor-toolbar::-webkit-scrollbar-track {
+    background: #f5f2ed;
+}
+
+.editor-toolbar::-webkit-scrollbar-thumb {
+    background: #d4cfc4;
+    border-radius: 2px;
+}
+
+.editor-toolbar::-webkit-scrollbar-thumb:hover {
+    background: #2d5f5d;
 }
 
 /* 색상 드롭다운 전체 래퍼 */
@@ -585,6 +608,7 @@ body {
     width: 1px;
     height: 18px;
     background-color: #d4cfc4;
+    flex-shrink: 0;
 }
 
 .editor {
@@ -1030,11 +1054,61 @@ body {
     .editor {
         padding: 20px 24px 20px 24px;
     }
+
+    /* 툴바 모바일 최적화 */
+    .editor-toolbar {
+        padding: 6px 8px;
+        gap: 3px;
+    }
+
+    .editor-toolbar button {
+        padding: 4px 6px;
+        font-size: 12px;
+    }
+
+    .toolbar-separator {
+        height: 16px;
+    }
+
+    /* 색상/폰트 드롭다운 버튼 최적화 */
+    .toolbar-color-dropdown > .toolbar-button,
+    .toolbar-font-dropdown > .toolbar-button {
+        padding: 4px 6px;
+        font-size: 12px;
+    }
 }
 
 @media (max-width: 480px) {
     .editor {
         padding: 16px 16px 16px 16px;
+    }
+
+    /* 툴바 모바일 (소형) 최적화 */
+    .editor-toolbar {
+        padding: 4px 6px;
+        gap: 2px;
+    }
+
+    .editor-toolbar button {
+        padding: 3px 5px;
+        font-size: 11px;
+    }
+
+    .toolbar-separator {
+        height: 14px;
+    }
+
+    /* 드롭다운 메뉴 모바일 조정 */
+    .toolbar-color-menu,
+    .toolbar-font-menu {
+        min-width: 130px;
+        max-height: 250px;
+    }
+
+    .toolbar-color-menu .color-option,
+    .toolbar-font-menu .color-option {
+        padding: 6px 8px;
+        font-size: 12px;
     }
 }
 
