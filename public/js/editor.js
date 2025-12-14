@@ -17,6 +17,12 @@ import FontFamily from "https://esm.sh/@tiptap/extension-font-family@2.0.0-beta.
 import TaskList from "https://esm.sh/@tiptap/extension-task-list@2.0.0-beta.209";
 import TaskItem from "https://esm.sh/@tiptap/extension-task-item@2.0.0-beta.209";
 
+// Table 익스텐션 ESM import
+import Table from "https://esm.sh/@tiptap/extension-table@2.0.0-beta.209";
+import TableRow from "https://esm.sh/@tiptap/extension-table-row@2.0.0-beta.209";
+import TableHeader from "https://esm.sh/@tiptap/extension-table-header@2.0.0-beta.209";
+import TableCell from "https://esm.sh/@tiptap/extension-table-cell@2.0.0-beta.209";
+
 // Math 노드 import
 import { MathBlock, MathInline } from './math-node.js';
 
@@ -142,6 +148,15 @@ export const SLASH_ITEMS = [
         icon: "$",
         command(editor) {
             editor.chain().focus().insertContent('$수식$').run();
+        }
+    },
+    {
+        id: "table",
+        label: "표",
+        description: "3x3 표 삽입",
+        icon: "⊞",
+        command(editor) {
+            editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
         }
     }
 ];
@@ -419,6 +434,46 @@ export function initEditor() {
             TaskItem.configure({
                 nested: true,
             }),
+            Table.configure({
+                resizable: true,
+                lastColumnResizable: false,
+                allowTableNodeSelection: true,
+            }),
+            TableRow,
+            TableHeader.extend({
+                addAttributes() {
+                    return {
+                        ...this.parent?.(),
+                        style: {
+                            default: null,
+                            parseHTML: element => element.getAttribute('style'),
+                            renderHTML: attributes => {
+                                if (!attributes.style) {
+                                    return {};
+                                }
+                                return { style: attributes.style };
+                            },
+                        },
+                    };
+                },
+            }),
+            TableCell.extend({
+                addAttributes() {
+                    return {
+                        ...this.parent?.(),
+                        style: {
+                            default: null,
+                            parseHTML: element => element.getAttribute('style'),
+                            renderHTML: attributes => {
+                                if (!attributes.style) {
+                                    return {};
+                                }
+                                return { style: attributes.style };
+                            },
+                        },
+                    };
+                },
+            }),
             MathBlock,
             MathInline,
         ],
@@ -428,9 +483,19 @@ export function initEditor() {
         },
         onTransaction() {
             updateToolbarState(editor);
+            // 크기 조절 중이 아닐 때만 핸들 재생성
+            if (!isResizingTable) {
+                setTimeout(() => addTableResizeHandles(editor), 50);
+            }
         },
         onCreate() {
             updateToolbarState(editor);
+            // 에디터 생성 시 핸들 추가
+            setTimeout(() => addTableResizeHandles(editor), 50);
+        },
+        onUpdate() {
+            // 내용 업데이트 시 핸들 재생성
+            setTimeout(() => addTableResizeHandles(editor), 50);
         }
     });
 
@@ -687,4 +752,425 @@ export function bindToolbar(editor) {
 
         updateToolbarState(editor);
     });
+}
+
+/**
+ * 테이블 크기 조절 핸들 추가 및 관리
+ */
+let resizingState = {
+    isResizing: false,
+    resizeType: null, // 'column' or 'row'
+    startX: 0,
+    startY: 0,
+    startWidth: 0,
+    startHeight: 0,
+    targetCell: null,
+    targetRow: null,
+    editor: null
+};
+
+// 크기 조절 중인지 확인하는 플래그
+let isResizingTable = false;
+
+/**
+ * 테이블에 크기 조절 핸들 추가
+ */
+export function addTableResizeHandles(editor) {
+    const editorElement = document.querySelector("#editor .ProseMirror");
+    if (!editorElement) return;
+
+    // 기존 핸들 컨테이너 제거
+    document.querySelectorAll(".table-resize-overlay").forEach(el => el.remove());
+
+    // 모든 테이블 찾기
+    const tables = editorElement.querySelectorAll("table");
+    if (tables.length === 0) return;
+
+    // editor 인스턴스 저장
+    if (editor) {
+        resizingState.editor = editor;
+    }
+
+    tables.forEach((table, tableIndex) => {
+        // 테이블 위치 가져오기
+        const tableRect = table.getBoundingClientRect();
+
+        // overlay 생성 (fixed position 사용)
+        const overlay = document.createElement("div");
+        overlay.className = "table-resize-overlay";
+        overlay.style.position = "fixed";
+        overlay.style.left = tableRect.left + "px";
+        overlay.style.top = tableRect.top + "px";
+        overlay.style.width = tableRect.width + "px";
+        overlay.style.height = tableRect.height + "px";
+        overlay.style.zIndex = "9999";
+        overlay.style.pointerEvents = "none";
+
+        const rows = table.querySelectorAll("tr");
+
+        rows.forEach((row, rowIndex) => {
+            const cells = row.querySelectorAll("td, th");
+
+            cells.forEach((cell, cellIndex) => {
+                const cellRect = cell.getBoundingClientRect();
+
+                // 열 크기 조절 핸들 (마지막 열이 아닌 경우)
+                if (cellIndex < cells.length - 1) {
+                    const colHandle = document.createElement("div");
+                    colHandle.className = "custom-resize-handle custom-resize-handle-col";
+                    colHandle.dataset.cellIndex = cellIndex;
+                    colHandle.dataset.rowIndex = rowIndex;
+                    colHandle.dataset.tableIndex = tableIndex;
+
+                    const left = cellRect.right - tableRect.left - 3;
+                    const top = cellRect.top - tableRect.top;
+                    const height = cellRect.height;
+
+                    colHandle.style.left = left + "px";
+                    colHandle.style.top = top + "px";
+                    colHandle.style.height = height + "px";
+                    colHandle.style.pointerEvents = "auto";
+
+                    overlay.appendChild(colHandle);
+                    colHandle.addEventListener("mousedown", startColumnResize);
+                }
+
+                // 행 크기 조절 핸들 (마지막 행이 아닌 경우)
+                if (rowIndex < rows.length - 1) {
+                    const rowHandle = document.createElement("div");
+                    rowHandle.className = "custom-resize-handle custom-resize-handle-row";
+                    rowHandle.dataset.cellIndex = cellIndex;
+                    rowHandle.dataset.rowIndex = rowIndex;
+                    rowHandle.dataset.tableIndex = tableIndex;
+
+                    const left = cellRect.left - tableRect.left;
+                    const top = cellRect.bottom - tableRect.top - 3;
+                    const width = cellRect.width;
+
+                    rowHandle.style.left = left + "px";
+                    rowHandle.style.top = top + "px";
+                    rowHandle.style.width = width + "px";
+                    rowHandle.style.pointerEvents = "auto";
+
+                    overlay.appendChild(rowHandle);
+                    rowHandle.addEventListener("mousedown", startRowResize);
+                }
+            });
+        });
+
+        document.body.appendChild(overlay);
+    });
+}
+
+// 스크롤 시 핸들 위치 업데이트
+window.addEventListener("scroll", () => {
+    if (resizingState.editor) {
+        addTableResizeHandles(resizingState.editor);
+    }
+}, true);
+
+// 창 크기 변경 시 핸들 위치 실시간 업데이트
+window.addEventListener("resize", () => {
+    if (resizingState.editor) {
+        addTableResizeHandles(resizingState.editor);
+    }
+});
+
+/**
+ * 테이블 크기 초기화
+ */
+function resetTableSize(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    console.log("테이블 크기 초기화 시작");
+
+    if (!resizingState.editor) {
+        console.log("에디터 인스턴스 없음");
+        return;
+    }
+
+    const editor = resizingState.editor;
+    const editorElement = document.querySelector("#editor .ProseMirror");
+    const tables = editorElement.querySelectorAll("table");
+
+    console.log(`테이블 개수: ${tables.length}`);
+
+    if (tables.length === 0) return;
+
+    // 모든 테이블의 모든 셀 초기화
+    const { state } = editor.view;
+    const { tr } = state;
+    let updated = false;
+
+    tables.forEach(table => {
+        const allCells = table.querySelectorAll("td, th");
+        console.log(`셀 개수: ${allCells.length}`);
+
+        allCells.forEach(cell => {
+            const pos = editor.view.posAtDOM(cell, 0);
+            if (pos === null || pos === undefined) return;
+
+            const $pos = state.doc.resolve(pos);
+            const cellNode = $pos.node($pos.depth);
+
+            if (cellNode && (cellNode.type.name === "tableCell" || cellNode.type.name === "tableHeader")) {
+                console.log(`셀 초기화 전 attrs:`, cellNode.attrs);
+
+                // style과 colwidth 속성을 null로 설정
+                const newAttrs = {
+                    ...cellNode.attrs,
+                    style: null,
+                    colwidth: null
+                };
+
+                console.log(`셀 초기화 후 attrs:`, newAttrs);
+
+                tr.setNodeMarkup($pos.before($pos.depth), null, newAttrs);
+                updated = true;
+            }
+        });
+    });
+
+    console.log(`업데이트 여부: ${updated}`);
+
+    // 트랜잭션 적용
+    if (updated) {
+        editor.view.dispatch(tr);
+        console.log("트랜잭션 적용 완료");
+
+        // 핸들 재생성
+        setTimeout(() => {
+            addTableResizeHandles(editor);
+        }, 50);
+    }
+}
+
+/**
+ * 열 크기 조절 시작
+ */
+function startColumnResize(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // 더블클릭인 경우 크기 초기화
+    if (e.detail === 2) {
+        console.log("더블클릭 감지 - 테이블 크기 초기화");
+        resetTableSize(e);
+        return;
+    }
+
+    const handle = e.target;
+    const cellIndex = parseInt(handle.dataset.cellIndex);
+    const rowIndex = parseInt(handle.dataset.rowIndex);
+
+    console.log(`열 크기 조절 시작: 행${rowIndex}, 열${cellIndex}`);
+
+    // 에디터에서 테이블 찾기
+    const editorElement = document.querySelector("#editor .ProseMirror");
+    const table = editorElement.querySelector("table");
+    if (!table) {
+        console.log("테이블을 찾을 수 없음");
+        return;
+    }
+
+    const rows = table.querySelectorAll("tr");
+    const row = rows[rowIndex];
+    if (!row) {
+        console.log("행을 찾을 수 없음");
+        return;
+    }
+
+    const cells = row.querySelectorAll("td, th");
+    const cell = cells[cellIndex];
+    if (!cell) {
+        console.log("셀을 찾을 수 없음");
+        return;
+    }
+
+    console.log(`셀 찾음, 현재 너비: ${cell.offsetWidth}px`);
+
+    isResizingTable = true; // TipTap 재렌더링 방지
+    resizingState.isResizing = true;
+    resizingState.resizeType = "column";
+    resizingState.startX = e.pageX;
+    resizingState.startWidth = cell.offsetWidth;
+    resizingState.cellIndex = cellIndex;
+    resizingState.table = table;
+
+    document.addEventListener("mousemove", doColumnResize);
+    document.addEventListener("mouseup", stopResize);
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    console.log("이벤트 리스너 등록 완료, TipTap 재렌더링 중단");
+}
+
+/**
+ * 열 크기 조절 중
+ */
+function doColumnResize(e) {
+    if (!resizingState.isResizing || resizingState.resizeType !== "column") return;
+    if (!resizingState.editor) return;
+
+    const diff = e.pageX - resizingState.startX;
+    const newWidth = Math.max(50, resizingState.startWidth + diff);
+
+    const editor = resizingState.editor;
+    const cellIndex = resizingState.cellIndex;
+    const table = resizingState.table;
+
+    // TipTap의 문서 모델을 업데이트
+    const { state } = editor.view;
+    const { tr } = state;
+    let updated = false;
+
+    // 테이블의 모든 행을 순회하며 해당 열의 셀에 width 설정
+    const rows = table.querySelectorAll("tr");
+    rows.forEach((row, rowIndex) => {
+        const cells = row.querySelectorAll("td, th");
+        const cell = cells[cellIndex];
+        if (!cell) return;
+
+        // DOM 위치에서 Prosemirror 위치 찾기
+        const pos = editor.view.posAtDOM(cell, 0);
+        if (pos === null || pos === undefined) return;
+
+        // 셀 노드의 시작 위치 찾기
+        const $pos = state.doc.resolve(pos);
+        const cellNode = $pos.node($pos.depth);
+
+        if (cellNode && (cellNode.type.name === "tableCell" || cellNode.type.name === "tableHeader")) {
+            // colwidth 속성 업데이트와 함께 인라인 스타일도 설정
+            const roundedWidth = Math.round(newWidth);
+            const attrs = {
+                ...cellNode.attrs,
+                colwidth: [roundedWidth],
+                style: `width: ${roundedWidth}px; min-width: ${roundedWidth}px;`
+            };
+            tr.setNodeMarkup($pos.before($pos.depth), null, attrs);
+            updated = true;
+        }
+    });
+
+    // 트랜잭션 적용
+    if (updated) {
+        editor.view.dispatch(tr);
+    }
+}
+
+/**
+ * 행 크기 조절 시작
+ */
+function startRowResize(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // 더블클릭인 경우 크기 초기화
+    if (e.detail === 2) {
+        console.log("더블클릭 감지 - 테이블 크기 초기화");
+        resetTableSize(e);
+        return;
+    }
+
+    const handle = e.target;
+    const rowIndex = parseInt(handle.dataset.rowIndex);
+
+    // 에디터에서 테이블 찾기
+    const editorElement = document.querySelector("#editor .ProseMirror");
+    const table = editorElement.querySelector("table");
+    if (!table) return;
+
+    const rows = table.querySelectorAll("tr");
+    const row = rows[rowIndex];
+    if (!row) return;
+
+    isResizingTable = true; // TipTap 재렌더링 방지
+    resizingState.isResizing = true;
+    resizingState.resizeType = "row";
+    resizingState.startY = e.pageY;
+    resizingState.startHeight = row.offsetHeight;
+    resizingState.targetRow = row;
+
+    document.addEventListener("mousemove", doRowResize);
+    document.addEventListener("mouseup", stopResize);
+
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+}
+
+/**
+ * 행 크기 조절 중
+ */
+function doRowResize(e) {
+    if (!resizingState.isResizing || resizingState.resizeType !== "row") return;
+    if (!resizingState.editor) return;
+
+    const diff = e.pageY - resizingState.startY;
+    const newHeight = Math.max(30, resizingState.startHeight + diff);
+
+    const editor = resizingState.editor;
+    const targetRow = resizingState.targetRow;
+
+    // TipTap의 문서 모델을 업데이트
+    const { state } = editor.view;
+    const { tr } = state;
+    let updated = false;
+
+    // 행의 모든 셀에 높이 설정
+    const cells = targetRow.querySelectorAll("td, th");
+    cells.forEach(cell => {
+        // DOM 위치에서 Prosemirror 위치 찾기
+        const pos = editor.view.posAtDOM(cell, 0);
+        if (pos === null || pos === undefined) return;
+
+        // 셀 노드의 시작 위치 찾기
+        const $pos = state.doc.resolve(pos);
+        const cellNode = $pos.node($pos.depth);
+
+        if (cellNode && (cellNode.type.name === "tableCell" || cellNode.type.name === "tableHeader")) {
+            // 높이 속성 업데이트 (rowspan과 colspan 유지)
+            const attrs = {
+                ...cellNode.attrs,
+                style: `height: ${newHeight}px; min-height: ${newHeight}px;`
+            };
+            tr.setNodeMarkup($pos.before($pos.depth), null, attrs);
+            updated = true;
+        }
+    });
+
+    // 트랜잭션 적용
+    if (updated) {
+        editor.view.dispatch(tr);
+    }
+}
+
+/**
+ * 크기 조절 종료
+ */
+function stopResize() {
+    if (resizingState.isResizing) {
+        document.removeEventListener("mousemove", doColumnResize);
+        document.removeEventListener("mousemove", doRowResize);
+        document.removeEventListener("mouseup", stopResize);
+
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+
+        resizingState.isResizing = false;
+        resizingState.resizeType = null;
+        resizingState.targetCell = null;
+        resizingState.targetRow = null;
+
+        console.log("크기 조절 종료, TipTap 재렌더링 재개");
+
+        // 크기 조절 완료 후 플래그 해제 및 핸들 재생성
+        setTimeout(() => {
+            isResizingTable = false;
+            if (resizingState.editor) {
+                addTableResizeHandles(resizingState.editor);
+            }
+        }, 100);
+    }
 }

@@ -1866,3 +1866,74 @@ body {
         opacity: 0;
     }
 }
+
+/* ============================================================================
+   Table Styles
+   ============================================================================ */
+
+/* TipTap 테이블 스타일 */
+.ProseMirror table {
+    border-collapse: collapse;
+    table-layout: fixed;
+    width: 100%;
+    margin: 16px 0;
+    overflow: hidden;
+}
+
+.ProseMirror td,
+.ProseMirror th {
+    border: 1px solid #d4cfc4;
+    padding: 8px 12px;
+    vertical-align: top;
+    box-sizing: border-box;
+    position: relative;
+    background-color: #ffffff;
+    overflow: hidden;
+    word-wrap: break-word;
+    min-width: 50px;
+}
+
+.ProseMirror th {
+    font-weight: 600;
+    text-align: left;
+    background-color: #f5f2ed;
+    color: #2d2d2d;
+}
+
+.ProseMirror .selectedCell:after {
+    z-index: 2;
+    position: absolute;
+    content: "";
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    background: rgba(45, 95, 93, 0.1);
+    pointer-events: none;
+}
+
+/* 테이블 크기 조절 오버레이 */
+.table-resize-overlay {
+    position: absolute;
+    pointer-events: none;
+    z-index: 999;
+}
+
+/* 커스텀 테이블 크기 조절 핸들 */
+.custom-resize-handle {
+    position: absolute;
+    pointer-events: auto;
+    background-color: transparent;
+}
+
+/* 열 크기 조절 핸들 (세로선) */
+.custom-resize-handle-col {
+    width: 6px;
+    cursor: col-resize;
+}
+
+/* 행 크기 조절 핸들 (가로선) */
+.custom-resize-handle-row {
+    height: 6px;
+    cursor: row-resize;
+}
