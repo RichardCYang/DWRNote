@@ -4,7 +4,8 @@
 
 import { secureFetch } from './ui-utils.js';
 import { escapeHtml, showErrorInEditor } from './ui-utils.js';
-import { startPageSync, stopPageSync } from './sync-manager.js';
+import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync } from './sync-manager.js';
+import { showCover, hideCover } from './cover-manager.js';
 
 // 전역 상태 (app.js에서 전달받음)
 let state = {
@@ -396,8 +397,20 @@ export async function loadPage(id) {
 
         renderPageList();
 
+        // 커버 이미지 표시
+        if (page.coverImage) {
+            showCover(page.coverImage, page.coverPosition || 50);
+        } else {
+            hideCover();
+        }
+
         // 실시간 동기화 시작 (암호화 페이지는 제외)
         startPageSync(page.id, page.isEncrypted || false);
+
+        // 컬렉션 메타데이터 동기화 시작 (커버 이미지 등)
+        if (page.collectionId) {
+            startCollectionSync(page.collectionId);
+        }
 
         // 모바일에서 페이지 로드 후 사이드바 닫기
         if (window.innerWidth <= 768) {
@@ -486,6 +499,8 @@ export async function toggleEditMode() {
     const toolbar = document.querySelector(".editor-toolbar");
     const iconEl = modeToggleBtn ? modeToggleBtn.querySelector("i") : null;
     const textEl = modeToggleBtn ? modeToggleBtn.querySelector("span") : null;
+    const addCoverBtn = document.getElementById('add-cover-btn');
+    const coverContainer = document.getElementById('page-cover-container');
 
     if (!state.editor || !modeToggleBtn) return;
 
@@ -506,6 +521,11 @@ export async function toggleEditMode() {
             toolbar.classList.remove("visible");
         }
 
+        // 읽기모드 진입 시 커버 추가 버튼 숨김
+        if (addCoverBtn) {
+            addCoverBtn.style.display = 'none';
+        }
+
         modeToggleBtn.classList.remove("write-mode");
         if (iconEl) {
             iconEl.className = "fa-solid fa-pencil";
@@ -521,6 +541,11 @@ export async function toggleEditMode() {
         }
         if (toolbar) {
             toolbar.classList.add("visible");
+        }
+
+        // 쓰기모드 진입 시 커버가 없으면 추가 버튼 표시
+        if (addCoverBtn && coverContainer && coverContainer.style.display === 'none') {
+            addCoverBtn.style.display = 'flex';
         }
 
         modeToggleBtn.classList.add("write-mode");

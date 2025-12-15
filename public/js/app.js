@@ -57,6 +57,11 @@ import {
     startCollectionSync,
     stopCollectionSync
 } from './sync-manager.js';
+import {
+    initCoverManager,
+    showCover,
+    hideCover
+} from './cover-manager.js';
 
 // ==================== Global State ====================
 const appState = {
@@ -827,6 +832,9 @@ async function init() {
 
     // 실시간 동기화 관리자 초기화
     initSyncManager(appState);
+
+    // 커버 이미지 관리자 초기화
+    initCoverManager(appState);
 
     // 이벤트 바인딩
     initEvent();

@@ -24,7 +24,10 @@ module.exports = (dependencies) => {
         formatDateForDb,
         getCollectionPermission,
         broadcastToCollection,
-        logError
+        logError,
+        coverUpload,
+        path,
+        fs
     } = dependencies;
 
     /**
@@ -40,7 +43,7 @@ module.exports = (dependencies) => {
                     : null;
 
             let query = `
-                SELECT DISTINCT p.id, p.title, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id, p.icon
+                SELECT DISTINCT p.id, p.title, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id, p.icon, p.cover_image, p.cover_position
                 FROM pages p
                 LEFT JOIN collections c ON p.collection_id = c.id
                 LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
@@ -70,7 +73,9 @@ module.exports = (dependencies) => {
                 isEncrypted: row.is_encrypted ? true : false,
                 shareAllowed: row.share_allowed ? true : false,
                 userId: row.user_id,
-                icon: row.icon || null
+                icon: row.icon || null,
+                coverImage: row.cover_image || null,
+                coverPosition: row.cover_position || 50
             }));
 
             console.log("GET /api/pages 응답 개수:", list.length);
@@ -92,7 +97,7 @@ module.exports = (dependencies) => {
 
         try {
             const [rows] = await pool.execute(
-                `SELECT p.id, p.title, p.content, p.created_at, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id, p.icon
+                `SELECT p.id, p.title, p.content, p.created_at, p.updated_at, p.parent_id, p.sort_order, p.collection_id, p.is_encrypted, p.share_allowed, p.user_id, p.icon, p.cover_image, p.cover_position
                  FROM pages p
                  LEFT JOIN collections c ON p.collection_id = c.id
                  LEFT JOIN collection_shares cs ON p.collection_id = cs.collection_id AND cs.shared_with_user_id = ?
@@ -119,7 +124,9 @@ module.exports = (dependencies) => {
                 isEncrypted: row.is_encrypted ? true : false,
                 shareAllowed: row.share_allowed ? true : false,
                 userId: row.user_id,
-                icon: row.icon || null
+                icon: row.icon || null,
+                coverImage: row.cover_image || null,
+                coverPosition: row.cover_position || 50
             };
 
             console.log("GET /api/pages/:id 응답:", id);
@@ -408,6 +415,196 @@ module.exports = (dependencies) => {
         } catch (error) {
             logError("PUT /api/pages/:id/share-permission", error);
             res.status(500).json({ error: "공유 허용 설정 업데이트 실패." });
+        }
+    });
+
+    /**
+     * 커버 이미지 업로드
+     * POST /api/pages/:id/cover
+     */
+    router.post("/:id/cover", authMiddleware, coverUpload.single('cover'), async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            // 권한 확인
+            const [rows] = await pool.execute(
+                `SELECT p.collection_id, p.cover_image FROM pages p WHERE p.id = ?`,
+                [id]
+            );
+            if (!rows.length) {
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
+
+            const { permission } = await getCollectionPermission(rows[0].collection_id, userId);
+            if (!permission || permission === 'READ') {
+                return res.status(403).json({ error: "권한이 없습니다." });
+            }
+
+            // 이전 커스텀 이미지 삭제 (기본 이미지가 아닌 경우)
+            const oldCover = rows[0].cover_image;
+            if (oldCover && !oldCover.startsWith('default/')) {
+                const oldPath = path.join(__dirname, '..', 'covers', oldCover);
+                fs.unlink(oldPath, (err) => {
+                    if (err) console.warn("이전 커버 삭제 실패:", err);
+                });
+            }
+
+            // DB 업데이트
+            const coverPath = `${userId}/${req.file.filename}`;
+            await pool.execute(
+                `UPDATE pages SET cover_image = ?, updated_at = NOW() WHERE id = ?`,
+                [coverPath, id]
+            );
+
+            // SSE 브로드캐스트
+            broadcastToCollection(rows[0].collection_id, 'metadata-change', {
+                pageId: id,
+                field: 'coverImage',
+                value: coverPath
+            }, userId);
+
+            console.log("POST /api/pages/:id/cover 업로드 완료:", coverPath);
+            res.json({ coverImage: coverPath });
+        } catch (error) {
+            logError("POST /api/pages/:id/cover", error);
+            res.status(500).json({ error: "커버 업로드 실패" });
+        }
+    });
+
+    /**
+     * 커버 이미지 선택/위치 조정
+     * PUT /api/pages/:id/cover
+     * body: { coverImage?: string, coverPosition?: number }
+     */
+    router.put("/:id/cover", authMiddleware, async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+        const { coverImage, coverPosition } = req.body;
+
+        try {
+            // 권한 확인
+            const [rows] = await pool.execute(
+                `SELECT p.collection_id, p.cover_image FROM pages p WHERE p.id = ?`,
+                [id]
+            );
+            if (!rows.length) {
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
+
+            const { permission } = await getCollectionPermission(rows[0].collection_id, userId);
+            if (!permission || permission === 'READ') {
+                return res.status(403).json({ error: "권한이 없습니다." });
+            }
+
+            // 업데이트할 필드 결정
+            const updates = [];
+            const values = [];
+
+            if (coverImage !== undefined) {
+                // 기본 이미지 선택 시 이전 커스텀 이미지 삭제
+                const oldCover = rows[0].cover_image;
+                if (oldCover && !oldCover.startsWith('default/') && coverImage.startsWith('default/')) {
+                    const oldPath = path.join(__dirname, '..', 'covers', oldCover);
+                    fs.unlink(oldPath, (err) => {
+                        if (err) console.warn("이전 커버 삭제 실패:", err);
+                    });
+                }
+                updates.push('cover_image = ?');
+                values.push(coverImage);
+            }
+
+            if (typeof coverPosition === 'number') {
+                updates.push('cover_position = ?');
+                values.push(Math.max(0, Math.min(100, coverPosition)));
+            }
+
+            if (updates.length === 0) {
+                return res.status(400).json({ error: "업데이트할 데이터 없음" });
+            }
+
+            updates.push('updated_at = NOW()');
+            values.push(id);
+
+            await pool.execute(
+                `UPDATE pages SET ${updates.join(', ')} WHERE id = ?`,
+                values
+            );
+
+            // SSE 브로드캐스트
+            if (coverImage !== undefined) {
+                broadcastToCollection(rows[0].collection_id, 'metadata-change', {
+                    pageId: id,
+                    field: 'coverImage',
+                    value: coverImage
+                }, userId);
+            }
+            if (typeof coverPosition === 'number') {
+                broadcastToCollection(rows[0].collection_id, 'metadata-change', {
+                    pageId: id,
+                    field: 'coverPosition',
+                    value: Math.max(0, Math.min(100, coverPosition))
+                }, userId);
+            }
+
+            console.log("PUT /api/pages/:id/cover 업데이트 완료");
+            res.json({ success: true });
+        } catch (error) {
+            logError("PUT /api/pages/:id/cover", error);
+            res.status(500).json({ error: "커버 업데이트 실패" });
+        }
+    });
+
+    /**
+     * 커버 이미지 제거
+     * DELETE /api/pages/:id/cover
+     */
+    router.delete("/:id/cover", authMiddleware, async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            // 권한 확인
+            const [rows] = await pool.execute(
+                `SELECT p.collection_id, p.cover_image FROM pages p WHERE p.id = ?`,
+                [id]
+            );
+            if (!rows.length) {
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
+
+            const { permission } = await getCollectionPermission(rows[0].collection_id, userId);
+            if (!permission || permission === 'READ') {
+                return res.status(403).json({ error: "권한이 없습니다." });
+            }
+
+            // 커스텀 이미지 파일 삭제
+            const oldCover = rows[0].cover_image;
+            if (oldCover && !oldCover.startsWith('default/')) {
+                const oldPath = path.join(__dirname, '..', 'covers', oldCover);
+                fs.unlink(oldPath, (err) => {
+                    if (err) console.warn("커버 파일 삭제 실패:", err);
+                });
+            }
+
+            // DB 업데이트
+            await pool.execute(
+                `UPDATE pages SET cover_image = NULL, cover_position = 50, updated_at = NOW() WHERE id = ?`,
+                [id]
+            );
+
+            // SSE 브로드캐스트
+            broadcastToCollection(rows[0].collection_id, 'metadata-change', {
+                pageId: id,
+                field: 'coverImage',
+                value: null
+            }, userId);
+
+            console.log("DELETE /api/pages/:id/cover 제거 완료");
+            res.json({ success: true });
+        } catch (error) {
+            logError("DELETE /api/pages/:id/cover", error);
+            res.status(500).json({ error: "커버 제거 실패" });
         }
     });
 

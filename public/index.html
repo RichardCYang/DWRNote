@@ -64,10 +64,33 @@
                             placeholder="제목 없음"
                             readonly
                         />
+                        <button id="add-cover-btn" class="mode-toggle-btn" style="display: none;">
+                            <i class="fa-solid fa-image"></i>
+                            <span>커버 추가</span>
+                        </button>
                         <button id="mode-toggle-btn" class="mode-toggle-btn">
                             <i class="fa-solid fa-pencil"></i>
                             <span>쓰기모드</span>
                         </button>
+                    </div>
+
+                    <!-- 커버 이미지 영역 -->
+                    <div class="page-cover-container" id="page-cover-container" style="display: none;">
+                        <div class="page-cover-image" id="page-cover-image"></div>
+                        <div class="page-cover-overlay">
+                            <button class="page-cover-btn" id="change-cover-btn" title="커버 변경">
+                                <i class="fa-solid fa-image"></i>
+                                커버 변경
+                            </button>
+                            <button class="page-cover-btn" id="reposition-cover-btn" title="위치 조정">
+                                <i class="fa-solid fa-arrows-up-down"></i>
+                                위치 조정
+                            </button>
+                            <button class="page-cover-btn" id="remove-cover-btn" title="커버 제거">
+                                <i class="fa-solid fa-trash"></i>
+                                제거
+                            </button>
+                        </div>
                     </div>
                     <div class="editor-toolbar">
                         <button type="button" data-command="bold">
@@ -964,6 +987,56 @@
         <!-- 공용 Context Menu -->
         <div id="context-menu" class="context-menu hidden">
             <div id="context-menu-content"></div>
+        </div>
+
+        <!-- 커버 선택 모달 -->
+        <div class="modal hidden" id="cover-modal">
+            <div class="modal-overlay"></div>
+            <div class="modal-content cover-modal-content">
+                <div class="modal-header">
+                    <h2>커버 선택</h2>
+                    <button id="close-cover-modal-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+
+                <div class="cover-modal-tabs">
+                    <button class="cover-tab active" data-tab="default">기본 이미지</button>
+                    <button class="cover-tab" data-tab="upload">업로드</button>
+                </div>
+
+                <div class="cover-modal-body">
+                    <!-- 기본 이미지 탭 -->
+                    <div class="cover-tab-content active" data-tab-content="default">
+                        <div class="cover-gallery">
+                            <div class="cover-option" data-cover="default/img1.png">
+                                <img src="/covers/default/img1.png" alt="기본 커버 1">
+                            </div>
+                            <div class="cover-option" data-cover="default/img2.png">
+                                <img src="/covers/default/img2.png" alt="기본 커버 2">
+                            </div>
+                            <div class="cover-option" data-cover="default/img3.png">
+                                <img src="/covers/default/img3.png" alt="기본 커버 3">
+                            </div>
+                            <div class="cover-option" data-cover="default/img4.png">
+                                <img src="/covers/default/img4.png" alt="기본 커버 4">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 업로드 탭 -->
+                    <div class="cover-tab-content" data-tab-content="upload">
+                        <div class="cover-upload-area">
+                            <input type="file" id="cover-upload-input" accept="image/jpeg,image/png,image/gif,image/webp" hidden>
+                            <button class="cover-upload-btn" id="cover-upload-btn">
+                                <i class="fa-solid fa-cloud-arrow-up"></i>
+                                <span>이미지 업로드</span>
+                                <small>최대 2MB (JPG, PNG, GIF, WEBP)</small>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- 메인 코드 (import 안 씀, 전역 Tiptap 사용) -->

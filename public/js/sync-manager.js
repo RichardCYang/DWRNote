@@ -5,6 +5,7 @@
 
 import * as Y from 'https://cdn.jsdelivr.net/npm/yjs@13.6.18/+esm';
 import { escapeHtml } from './ui-utils.js';
+import { showCover, hideCover } from './cover-manager.js';
 
 // 전역 상태
 let currentPageSync = null;
@@ -203,6 +204,23 @@ export function startCollectionSync(collectionId) {
     eventSource.addEventListener('metadata-change', (e) => {
         try {
             const data = JSON.parse(e.data);
+
+            // 커버 이미지 동기화
+            if (data.field === 'coverImage' && data.pageId === state.currentPageId) {
+                if (data.value) {
+                    showCover(data.value, 50);
+                } else {
+                    hideCover();
+                }
+            }
+
+            // 커버 위치 동기화
+            if (data.field === 'coverPosition' && data.pageId === state.currentPageId) {
+                const imageEl = document.getElementById('page-cover-image');
+                if (imageEl) {
+                    imageEl.style.backgroundPositionY = `${data.value}%`;
+                }
+            }
 
             // 사이드바 업데이트
             updatePageInSidebar(data.pageId, data.field, data.value);

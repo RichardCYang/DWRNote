@@ -14,6 +14,8 @@ const Y = require("yjs");
 const https = require("https");
 const http = require("http");
 const certManager = require("./cert-manager");
+const multer = require("multer");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -560,6 +562,30 @@ async function initDb() {
         }
     }
 
+    // 페이지 커버 이미지 추가 (기본값 NULL - 커버 없음)
+    try {
+        await pool.execute(`
+            ALTER TABLE pages ADD COLUMN cover_image VARCHAR(255) NULL
+        `);
+        console.log("pages 테이블에 cover_image 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("pages.cover_image 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
+    // 페이지 커버 이미지 위치 추가 (기본값 50 - 중앙)
+    try {
+        await pool.execute(`
+            ALTER TABLE pages ADD COLUMN cover_position INT NOT NULL DEFAULT 50
+        `);
+        console.log("pages 테이블에 cover_position 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("pages.cover_position 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
     // collection_shares 테이블 생성 (사용자 간 직접 공유)
     await pool.execute(`
         CREATE TABLE IF NOT EXISTS collection_shares (
@@ -1032,6 +1058,38 @@ app.use("/api", csrfMiddleware);
 app.use("/api", generalLimiter);
 
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
+app.use('/covers', express.static(path.join(__dirname, 'covers')));
+
+/**
+ * multer 설정 (커버 이미지 업로드)
+ */
+const coverStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const userId = req.user.id;
+        const userCoverDir = path.join(__dirname, 'covers', String(userId));
+        fs.mkdirSync(userCoverDir, { recursive: true });
+        cb(null, userCoverDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}${path.extname(file.originalname)}`;
+        cb(null, uniqueName);
+    }
+});
+
+const coverUpload = multer({
+    storage: coverStorage,
+    limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = /jpeg|jpg|png|gif|webp/;
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const mimetype = allowedTypes.test(file.mimetype);
+        if (extname && mimetype) {
+            cb(null, true);
+        } else {
+            cb(new Error('이미지 파일만 업로드 가능합니다 (jpg, png, gif, webp)'));
+        }
+    }
+});
 
 /**
  * 서버 시작 (HTTPS 자동 설정)
@@ -1086,7 +1144,10 @@ app.use(express.static(path.join(__dirname, "public"), { index: false }));
             SESSION_TTL_MS,
             IS_PRODUCTION,
             BCRYPT_SALT_ROUNDS,
-            BASE_URL
+            BASE_URL,
+            coverUpload,
+            path,
+            fs
         };
 
         // 라우트 파일 Import
