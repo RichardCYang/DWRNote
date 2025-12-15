@@ -204,9 +204,10 @@ function sanitizeHtmlContent(html) {
             'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
             'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
             'ul', 'ol', 'li', 'blockquote',
-            'a', 'span', 'div'
+            'a', 'span', 'div',
+            'table', 'thead', 'tbody', 'tr', 'th', 'td'
         ],
-        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex'],
+        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth'],
         ALLOW_DATA_ATTR: false,
         ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
     });
@@ -873,8 +874,8 @@ async function saveYjsDocToDatabase(pageId, ydoc) {
         const sortOrder = yMetadata.get('sortOrder') || 0;
         const parentId = yMetadata.get('parentId') || null;
 
-        // HTML 추출 (간단한 방식)
-        const content = extractHtmlFromYDoc(ydoc);
+        const rawContent = extractHtmlFromYDoc(ydoc);
+        const content = sanitizeHtmlContent(rawContent);
 
         await pool.execute(
             `UPDATE pages
@@ -894,15 +895,13 @@ async function saveYjsDocToDatabase(pageId, ydoc) {
  */
 function extractHtmlFromYDoc(ydoc) {
     const yXmlFragment = ydoc.getXmlFragment('prosemirror');
-    // 초기 HTML이 메타데이터에 저장되어 있으면 사용
     const yMetadata = ydoc.getMap('metadata');
-    const initialHtml = yMetadata.get('initialHtml');
+    const content = yMetadata.get('content');
 
-    if (initialHtml) {
-        return initialHtml;
+    if (content) {
+        return content;
     }
 
-    // 기본 HTML 반환 (Yjs 변경사항이 적용되지 않을 수 있음)
     return '<p>실시간 협업 중...</p>';
 }
 
@@ -932,7 +931,7 @@ async function loadOrCreateYjsDoc(pageId) {
         yMetadata.set('icon', page.icon || null);
         yMetadata.set('sortOrder', page.sort_order || 0);
         yMetadata.set('parentId', page.parent_id || null);
-        yMetadata.set('initialHtml', page.content || '<p></p>');
+        yMetadata.set('content', page.content || '<p></p>');
     }
 
     yjsDocuments.set(pageId, {
