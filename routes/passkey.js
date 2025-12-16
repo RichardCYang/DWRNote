@@ -9,6 +9,8 @@ module.exports = (dependencies) => {
         csrfMiddleware,
         passkeyLimiter,
         sessions,
+        createSession,
+        generateCsrfToken,
         formatDateForDb,
         SESSION_COOKIE_NAME,
         CSRF_COOKIE_NAME,
