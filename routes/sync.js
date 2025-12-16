@@ -24,7 +24,8 @@ module.exports = (dependencies) => {
         broadcastToPage,
         getCollectionPermission,
         yjsDocuments,
-        logError
+        logError,
+        getSessionFromRequest
     } = dependencies;
 
     /**
@@ -213,6 +214,67 @@ module.exports = (dependencies) => {
 
         } catch (error) {
             logError('GET /api/collections/:collectionId/sync', error);
+            if (!res.headersSent) {
+                res.status(500).json({ error: '연결 실패' });
+            }
+        }
+    });
+
+    /**
+     * 사용자 알림 SSE (중복 로그인 감지 등)
+     * GET /api/user/notifications
+     */
+    router.get('/user/notifications', sseConnectionLimiter, authMiddleware, async (req, res) => {
+        const userId = req.user.id;
+        const session = getSessionFromRequest(req);
+
+        if (!session) {
+            return res.status(401).json({ error: '세션이 유효하지 않습니다.' });
+        }
+
+        const sessionId = session.id;
+
+        try {
+            // SSE 헤더 설정
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no');
+            res.flushHeaders();
+
+            // 사용자 연결 풀에 추가
+            if (!sseConnections.users.has(userId)) {
+                sseConnections.users.set(userId, new Set());
+            }
+
+            const connection = { res, sessionId };
+            sseConnections.users.get(userId).add(connection);
+
+            console.log(`[SSE] 사용자 알림 연결: userId=${userId}, sessionId=${sessionId}`);
+
+            // 연결 확인용 핑 (30초마다)
+            const pingInterval = setInterval(() => {
+                try {
+                    res.write(': ping\n\n');
+                } catch (error) {
+                    clearInterval(pingInterval);
+                }
+            }, 30000);
+
+            // 연결 종료 시 정리
+            req.on('close', () => {
+                clearInterval(pingInterval);
+                sseConnections.users.get(userId)?.delete(connection);
+
+                if (sseConnections.users.get(userId)?.size === 0) {
+                    sseConnections.users.delete(userId);
+                }
+
+                console.log(`[SSE] 사용자 알림 연결 종료: userId=${userId}, sessionId=${sessionId}`);
+            });
+
+        } catch (error) {
+            logError('GET /api/user/notifications', error);
             if (!res.headersSent) {
                 res.status(500).json({ error: '연결 실패' });
             }

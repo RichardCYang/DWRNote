@@ -18,6 +18,7 @@ module.exports = (dependencies) => {
         bcrypt,
         crypto,
         sessions,
+        userSessions,
         createSession,
         generateCsrfToken,
         formatDateForDb,
@@ -50,7 +51,7 @@ module.exports = (dependencies) => {
         try {
             const [rows] = await pool.execute(
                 `
-                SELECT id, username, password_hash, encryption_salt, totp_enabled, passkey_enabled
+                SELECT id, username, password_hash, encryption_salt, totp_enabled, passkey_enabled, block_duplicate_login
                 FROM users
                 WHERE username = ?
                 `,
@@ -97,7 +98,21 @@ module.exports = (dependencies) => {
             }
 
             // TOTP 비활성화 상태 - 정상 로그인 진행
-            const sessionId = createSession(user);
+            const sessionResult = createSession({
+                id: user.id,
+                username: user.username,
+                blockDuplicateLogin: user.block_duplicate_login
+            });
+
+            // 중복 로그인 차단 모드에서 거부된 경우
+            if (!sessionResult.success) {
+                return res.status(409).json({
+                    error: sessionResult.error,
+                    code: 'DUPLICATE_LOGIN_BLOCKED'
+                });
+            }
+
+            const sessionId = sessionResult.sessionId;
 
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
                 httpOnly: true,
@@ -136,6 +151,17 @@ module.exports = (dependencies) => {
         const session = getSessionFromRequest(req);
         if (session) {
             sessions.delete(session.id);
+
+            // userSessions에서도 제거
+            if (session.userId) {
+                const userSessionSet = userSessions.get(session.userId);
+                if (userSessionSet) {
+                    userSessionSet.delete(session.id);
+                    if (userSessionSet.size === 0) {
+                        userSessions.delete(session.userId);
+                    }
+                }
+            }
         }
 
         res.clearCookie(SESSION_COOKIE_NAME, {
@@ -189,6 +215,17 @@ module.exports = (dependencies) => {
             const session = getSessionFromRequest(req);
             if (session) {
                 sessions.delete(session.id);
+
+                // userSessions에서도 제거
+                if (session.userId) {
+                    const userSessionSet = userSessions.get(session.userId);
+                    if (userSessionSet) {
+                        userSessionSet.delete(session.id);
+                        if (userSessionSet.size === 0) {
+                            userSessions.delete(session.userId);
+                        }
+                    }
+                }
             }
 
             res.clearCookie(SESSION_COOKIE_NAME, {
@@ -256,7 +293,8 @@ module.exports = (dependencies) => {
 
             const user = {
                 id: result.insertId,
-                username: trimmedUsername
+                username: trimmedUsername,
+                blockDuplicateLogin: false // 신규 가입자는 기본값 false
             };
 
             await createCollection({
@@ -264,7 +302,17 @@ module.exports = (dependencies) => {
                 name: "기본 컬렉션"
             });
 
-            const sessionId = createSession(user);
+            const sessionResult = createSession(user);
+
+            // 회원가입 시에는 중복 로그인이 발생할 수 없지만 방어적 코딩
+            if (!sessionResult.success) {
+                return res.status(409).json({
+                    error: sessionResult.error,
+                    code: 'DUPLICATE_LOGIN_BLOCKED'
+                });
+            }
+
+            const sessionId = sessionResult.sessionId;
 
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
                 httpOnly: true,
@@ -381,6 +429,60 @@ module.exports = (dependencies) => {
         } catch (error) {
             logError("POST /api/auth/verify-password", error);
             res.status(500).json({ error: "비밀번호 확인 중 오류가 발생했습니다." });
+        }
+    });
+
+    /**
+     * 보안 설정 조회
+     * GET /api/auth/security-settings
+     */
+    router.get("/security-settings", authMiddleware, async (req, res) => {
+        try {
+            const [rows] = await pool.execute(
+                `SELECT block_duplicate_login FROM users WHERE id = ?`,
+                [req.user.id]
+            );
+
+            if (!rows.length) {
+                return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+            }
+
+            res.json({
+                blockDuplicateLogin: rows[0].block_duplicate_login === 1
+            });
+        } catch (error) {
+            logError("GET /api/auth/security-settings", error);
+            res.status(500).json({ error: "보안 설정 조회 중 오류가 발생했습니다." });
+        }
+    });
+
+    /**
+     * 보안 설정 업데이트
+     * PUT /api/auth/security-settings
+     * body: { blockDuplicateLogin: boolean }
+     */
+    router.put("/security-settings", authMiddleware, async (req, res) => {
+        const { blockDuplicateLogin } = req.body;
+
+        if (typeof blockDuplicateLogin !== "boolean") {
+            return res.status(400).json({ error: "올바른 설정 값이 아닙니다." });
+        }
+
+        try {
+            await pool.execute(
+                `UPDATE users SET block_duplicate_login = ? WHERE id = ?`,
+                [blockDuplicateLogin ? 1 : 0, req.user.id]
+            );
+
+            console.log(`[보안 설정] 사용자 ID ${req.user.id} (${req.user.username}): 중복 로그인 차단 = ${blockDuplicateLogin}`);
+
+            res.json({
+                ok: true,
+                blockDuplicateLogin: blockDuplicateLogin
+            });
+        } catch (error) {
+            logError("PUT /api/auth/security-settings", error);
+            res.status(500).json({ error: "보안 설정 업데이트 중 오류가 발생했습니다." });
         }
     });
 

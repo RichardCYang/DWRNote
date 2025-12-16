@@ -77,6 +77,8 @@ const DB_CONFIG = {
 
 let pool;
 const sessions = new Map();
+// 사용자별 세션 추적 (userId -> Set<sessionId>)
+const userSessions = new Map();
 
 /**
  * 만료된 세션 정리 작업
@@ -87,24 +89,37 @@ function cleanupExpiredSessions() {
     let cleanedCount = 0;
 
     sessions.forEach((session, sessionId) => {
+        let shouldDelete = false;
+
         // 임시 세션 (pendingUserId) 정리 - 10분 경과
         if (session.pendingUserId && session.createdAt + 10 * 60 * 1000 < now) {
-            sessions.delete(sessionId);
-            cleanedCount++;
-            return;
+            shouldDelete = true;
         }
 
         // 정식 세션의 절대 만료 시간 체크
         if (session.absoluteExpiry && session.absoluteExpiry <= now) {
-            sessions.delete(sessionId);
-            cleanedCount++;
-            return;
+            shouldDelete = true;
         }
 
         // Idle timeout 체크
         if (session.expiresAt && session.expiresAt <= now) {
+            shouldDelete = true;
+        }
+
+        if (shouldDelete) {
             sessions.delete(sessionId);
             cleanedCount++;
+
+            // userSessions에서도 제거
+            if (session.userId) {
+                const userSessionSet = userSessions.get(session.userId);
+                if (userSessionSet) {
+                    userSessionSet.delete(sessionId);
+                    if (userSessionSet.size === 0) {
+                        userSessions.delete(session.userId);
+                    }
+                }
+            }
         }
     });
 
@@ -302,6 +317,9 @@ function verifyCsrfToken(req) {
 /**
  * 세션 생성
  * 보안 개선: idle timeout과 absolute timeout 모두 적용
+ * 중복 로그인 감지: 사용자 설정에 따라 차단 또는 기존 세션 파기
+ * @param {Object} user - 사용자 정보 (id, username, blockDuplicateLogin 포함)
+ * @returns {Object} - { success: boolean, sessionId?: string, error?: string }
  */
 function createSession(user) {
     const sessionId = crypto.randomBytes(24).toString("hex");
@@ -309,6 +327,37 @@ function createSession(user) {
     const expiresAt = now + SESSION_TTL_MS; // idle timeout
     const absoluteExpiry = now + SESSION_ABSOLUTE_TTL_MS; // absolute timeout
 
+    // 중복 로그인 감지: 기존 세션 확인
+    const existingSessions = userSessions.get(user.id);
+    if (existingSessions && existingSessions.size > 0) {
+        console.log(`[중복 로그인 감지] 사용자 ID ${user.id} (${user.username})의 기존 세션 ${existingSessions.size}개 발견`);
+
+        // 사용자 설정 확인: 중복 로그인 차단 모드
+        if (user.blockDuplicateLogin) {
+            console.log(`[중복 로그인 차단] 사용자 ID ${user.id} (${user.username})의 새 로그인 시도 거부`);
+            return {
+                success: false,
+                error: '이미 다른 위치에서 로그인 중입니다. 기존 세션을 먼저 종료하거나, 설정에서 "중복 로그인 차단" 옵션을 해제해주세요.'
+            };
+        }
+
+        // 중복 로그인 허용 모드: 기존 세션들에게 알림 전송
+        broadcastToUser(user.id, 'duplicate-login', {
+            message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.',
+            timestamp: new Date().toISOString()
+        });
+
+        // 기존 세션 모두 파기
+        existingSessions.forEach(oldSessionId => {
+            sessions.delete(oldSessionId);
+            console.log(`[세션 파기] 세션 ID: ${oldSessionId}`);
+        });
+
+        // 사용자 세션 목록 초기화
+        existingSessions.clear();
+    }
+
+    // 새 세션 생성
     sessions.set(sessionId, {
         userId: user.id,
         username: user.username,
@@ -317,7 +366,15 @@ function createSession(user) {
         createdAt: now
     });
 
-    return sessionId;
+    // 사용자 세션 목록에 추가
+    if (!userSessions.has(user.id)) {
+        userSessions.set(user.id, new Set());
+    }
+    userSessions.get(user.id).add(sessionId);
+
+    console.log(`[세션 생성] 사용자: ${user.username}, 세션 ID: ${sessionId}`);
+
+    return { success: true, sessionId };
 }
 
 /**
@@ -344,12 +401,32 @@ function getSessionFromRequest(req) {
     // 절대 만료 시간 체크 (세션 생성 후 24시간)
     if (session.absoluteExpiry <= now) {
         sessions.delete(sessionId);
+        // userSessions에서도 제거
+        if (session.userId) {
+            const userSessionSet = userSessions.get(session.userId);
+            if (userSessionSet) {
+                userSessionSet.delete(sessionId);
+                if (userSessionSet.size === 0) {
+                    userSessions.delete(session.userId);
+                }
+            }
+        }
         return null;
     }
 
     // Idle timeout 체크 (마지막 활동 후 7일)
     if (session.expiresAt <= now) {
         sessions.delete(sessionId);
+        // userSessions에서도 제거
+        if (session.userId) {
+            const userSessionSet = userSessions.get(session.userId);
+            if (userSessionSet) {
+                userSessionSet.delete(sessionId);
+                if (userSessionSet.size === 0) {
+                    userSessions.delete(session.userId);
+                }
+            }
+        }
         return null;
     }
 
@@ -690,6 +767,18 @@ async function initDb() {
         }
     }
 
+    // users 테이블에 block_duplicate_login 컬럼 추가 (중복 로그인 차단)
+    try {
+        await pool.execute(`
+            ALTER TABLE users ADD COLUMN block_duplicate_login TINYINT(1) NOT NULL DEFAULT 0
+        `);
+        console.log("users 테이블에 block_duplicate_login 컬럼 추가 완료");
+    } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.warn("block_duplicate_login 컬럼 추가 중 경고:", error.message);
+        }
+    }
+
     // passkeys 테이블 생성 (WebAuthn 크레덴셜 저장)
     await pool.execute(`
         CREATE TABLE IF NOT EXISTS passkeys (
@@ -924,7 +1013,8 @@ const sseConnectionLimiter = rateLimit({
 // SSE 연결 풀
 const sseConnections = {
     pages: new Map(), // pageId -> Set<{res, userId, username, color}>
-    collections: new Map() // collectionId -> Set<{res, userId, permission}>
+    collections: new Map(), // collectionId -> Set<{res, userId, permission}>
+    users: new Map() // userId -> Set<{res, sessionId}>
 };
 
 // Yjs 문서 캐시 (메모리 관리)
@@ -1086,6 +1176,25 @@ function broadcastToCollection(collectionId, event, data, excludeUserId = null) 
 }
 
 /**
+ * SSE 브로드캐스트 (사용자)
+ */
+function broadcastToUser(userId, event, data, excludeSessionId = null) {
+    const connections = sseConnections.users.get(userId);
+    if (!connections) return;
+
+    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+    connections.forEach(conn => {
+        if (excludeSessionId && conn.sessionId === excludeSessionId) return;
+        try {
+            conn.res.write(message);
+        } catch (error) {
+            console.error(`[SSE] 사용자 브로드캐스트 실패 (userId: ${userId}):`, error);
+        }
+    });
+}
+
+/**
  * 미들웨어 설정
  */
 app.use(express.json());
@@ -1191,6 +1300,7 @@ const coverUpload = multer({
             speakeasy,
             QRCode,
             sessions,
+            userSessions,
             createSession,
             getSessionFromRequest,
             generateCsrfToken,
@@ -1209,6 +1319,7 @@ const coverUpload = multer({
             generateShareToken,
             broadcastToCollection,
             broadcastToPage,
+            broadcastToUser,
             sseConnections,
             getUserColor,
             loadOrCreateYjsDoc,

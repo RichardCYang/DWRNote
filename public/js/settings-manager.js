@@ -20,10 +20,11 @@ export function initSettingsManager(appState) {
 /**
  * 설정 모달 열기
  */
-export function openSettingsModal() {
+export async function openSettingsModal() {
     const modal = document.querySelector("#settings-modal");
     const usernameEl = document.querySelector("#settings-username");
     const defaultModeSelect = document.querySelector("#settings-default-mode");
+    const blockDuplicateLoginToggle = document.querySelector("#block-duplicate-login-toggle");
 
     if (!modal) return;
 
@@ -42,6 +43,23 @@ export function openSettingsModal() {
         defaultModeSelect.value = state.userSettings.defaultMode;
     }
 
+    // 보안 설정 로드
+    if (blockDuplicateLoginToggle) {
+        try {
+            const { secureFetch } = await import('./ui-utils.js');
+            const response = await secureFetch('/api/auth/security-settings', {
+                method: 'GET'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                blockDuplicateLoginToggle.checked = data.blockDuplicateLogin;
+            }
+        } catch (error) {
+            console.error('보안 설정 로드 실패:', error);
+        }
+    }
+
     modal.classList.remove("hidden");
 }
 
@@ -58,14 +76,41 @@ export function closeSettingsModal() {
 /**
  * 설정 저장
  */
-export function saveSettings() {
+export async function saveSettings() {
     const defaultModeSelect = document.querySelector("#settings-default-mode");
+    const blockDuplicateLoginToggle = document.querySelector("#block-duplicate-login-toggle");
 
+    // 로컬 설정 저장
     if (defaultModeSelect) {
         state.userSettings.defaultMode = defaultModeSelect.value;
-        // localStorage에 설정 저장
         localStorage.setItem("userSettings", JSON.stringify(state.userSettings));
         console.log("설정 저장됨:", state.userSettings);
+    }
+
+    // 보안 설정 저장
+    if (blockDuplicateLoginToggle) {
+        try {
+            const { secureFetch } = await import('./ui-utils.js');
+            const response = await secureFetch('/api/auth/security-settings', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    blockDuplicateLogin: blockDuplicateLoginToggle.checked
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('보안 설정 저장 실패');
+            }
+
+            console.log('보안 설정 저장 완료:', blockDuplicateLoginToggle.checked);
+        } catch (error) {
+            console.error('보안 설정 저장 실패:', error);
+            alert('보안 설정 저장에 실패했습니다.');
+            return;
+        }
     }
 
     closeSettingsModal();

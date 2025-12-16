@@ -56,6 +56,11 @@ async function handleLogin(event) {
                 if (data && data.error) {
                     message = data.error;
                 }
+
+                // 중복 로그인 차단 에러 처리
+                if (res.status === 409 && data.code === 'DUPLICATE_LOGIN_BLOCKED') {
+                    message += "\n\n기존 세션을 종료하려면 다른 기기에서 로그아웃하거나, 설정에서 '중복 로그인 차단' 옵션을 해제하세요.";
+                }
             } catch (_) {
                 // ignore
             }

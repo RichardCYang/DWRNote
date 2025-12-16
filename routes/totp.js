@@ -222,7 +222,7 @@ module.exports = (dependencies) => {
             const userId = tempSession.pendingUserId;
 
             const [rows] = await pool.execute(
-                "SELECT totp_secret, username FROM users WHERE id = ? AND totp_enabled = 1",
+                "SELECT totp_secret, username, block_duplicate_login FROM users WHERE id = ? AND totp_enabled = 1",
                 [userId]
             );
 
@@ -230,7 +230,7 @@ module.exports = (dependencies) => {
                 return res.status(404).json({ error: "TOTP가 활성화되지 않았습니다." });
             }
 
-            const { totp_secret, username } = rows[0];
+            const { totp_secret, username, block_duplicate_login } = rows[0];
 
             const verified = speakeasy.totp.verify({
                 secret: totp_secret,
@@ -243,18 +243,25 @@ module.exports = (dependencies) => {
                 return res.status(401).json({ error: "잘못된 인증 코드입니다." });
             }
 
-            const now = new Date();
-            const sessionId = crypto.randomBytes(32).toString("hex");
-            const csrfToken = generateCsrfToken();
-
-            sessions.set(sessionId, {
-                userId: userId,
+            // 세션 생성
+            const sessionResult = createSession({
+                id: userId,
                 username: username,
-                csrfToken: csrfToken,
-                createdAt: now.getTime(),
-                lastAccessedAt: now.getTime()
+                blockDuplicateLogin: block_duplicate_login
             });
 
+            // 중복 로그인 차단 모드에서 거부된 경우
+            if (!sessionResult.success) {
+                sessions.delete(tempSessionId);
+                return res.status(409).json({
+                    error: sessionResult.error,
+                    code: 'DUPLICATE_LOGIN_BLOCKED'
+                });
+            }
+
+            const sessionId = sessionResult.sessionId;
+
+            // 임시 세션 삭제
             sessions.delete(tempSessionId);
 
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
@@ -264,6 +271,7 @@ module.exports = (dependencies) => {
                 maxAge: SESSION_TTL_MS
             });
 
+            const csrfToken = generateCsrfToken();
             res.cookie(CSRF_COOKIE_NAME, csrfToken, {
                 httpOnly: false,
                 secure: IS_PRODUCTION,
@@ -331,7 +339,7 @@ module.exports = (dependencies) => {
             );
 
             const [userRows] = await pool.execute(
-                "SELECT username FROM users WHERE id = ?",
+                "SELECT username, block_duplicate_login FROM users WHERE id = ?",
                 [userId]
             );
 
@@ -339,19 +347,27 @@ module.exports = (dependencies) => {
                 return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
             }
 
-            const username = userRows[0].username;
+            const { username, block_duplicate_login } = userRows[0];
 
-            const sessionId = crypto.randomBytes(32).toString("hex");
-            const csrfToken = generateCsrfToken();
-
-            sessions.set(sessionId, {
-                userId: userId,
+            // 세션 생성
+            const sessionResult = createSession({
+                id: userId,
                 username: username,
-                csrfToken: csrfToken,
-                createdAt: now.getTime(),
-                lastAccessedAt: now.getTime()
+                blockDuplicateLogin: block_duplicate_login
             });
 
+            // 중복 로그인 차단 모드에서 거부된 경우
+            if (!sessionResult.success) {
+                sessions.delete(tempSessionId);
+                return res.status(409).json({
+                    error: sessionResult.error,
+                    code: 'DUPLICATE_LOGIN_BLOCKED'
+                });
+            }
+
+            const sessionId = sessionResult.sessionId;
+
+            // 임시 세션 삭제
             sessions.delete(tempSessionId);
 
             res.cookie(SESSION_COOKIE_NAME, sessionId, {
@@ -361,6 +377,7 @@ module.exports = (dependencies) => {
                 maxAge: SESSION_TTL_MS
             });
 
+            const csrfToken = generateCsrfToken();
             res.cookie(CSRF_COOKIE_NAME, csrfToken, {
                 httpOnly: false,
                 secure: IS_PRODUCTION,

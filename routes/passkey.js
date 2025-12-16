@@ -343,9 +343,9 @@ module.exports = (dependencies) => {
                 [newCounter, nowStr, passkey.id]
             );
 
-            // 정식 세션 생성 (TOTP와 동일한 로직)
+            // 정식 세션 생성
             const [userRows] = await pool.execute(
-                "SELECT username FROM users WHERE id = ?",
+                "SELECT username, block_duplicate_login FROM users WHERE id = ?",
                 [userId]
             );
 
@@ -353,19 +353,25 @@ module.exports = (dependencies) => {
                 return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
             }
 
-            const username = userRows[0].username;
-            const sessionId = crypto.randomBytes(32).toString("hex");
-            const csrfToken = crypto.randomBytes(24).toString("hex");
+            const { username, block_duplicate_login } = userRows[0];
 
-            sessions.set(sessionId, {
-                userId: userId,
+            // 세션 생성
+            const sessionResult = createSession({
+                id: userId,
                 username: username,
-                csrfToken: csrfToken,
-                createdAt: now.getTime(),
-                lastAccessedAt: now.getTime(),
-                expiresAt: now.getTime() + SESSION_TTL_MS,
-                absoluteExpiry: now.getTime() + (24 * 60 * 60 * 1000)
+                blockDuplicateLogin: block_duplicate_login
             });
+
+            // 중복 로그인 차단 모드에서 거부된 경우
+            if (!sessionResult.success) {
+                sessions.delete(tempSessionId);
+                return res.status(409).json({
+                    error: sessionResult.error,
+                    code: 'DUPLICATE_LOGIN_BLOCKED'
+                });
+            }
+
+            const sessionId = sessionResult.sessionId;
 
             // 임시 세션 삭제
             sessions.delete(tempSessionId);
@@ -383,6 +389,7 @@ module.exports = (dependencies) => {
                 maxAge: SESSION_TTL_MS
             });
 
+            const csrfToken = generateCsrfToken();
             res.cookie(CSRF_COOKIE_NAME, csrfToken, {
                 httpOnly: false,
                 secure: IS_PRODUCTION,
