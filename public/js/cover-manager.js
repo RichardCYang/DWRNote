@@ -36,9 +36,9 @@ export function initCoverManager(appState) {
 
     // 모달 탭 전환
     document.querySelectorAll('.cover-tab').forEach(tab => {
-        tab.addEventListener('click', (e) => {
+        tab.addEventListener('click', async (e) => {
             const tabName = e.target.dataset.tab;
-            switchCoverTab(tabName);
+            await switchCoverTab(tabName);
         });
     });
 
@@ -104,7 +104,7 @@ function openCoverModal() {
     }
 }
 
-function switchCoverTab(tabName) {
+async function switchCoverTab(tabName) {
     // 탭 버튼 활성화
     document.querySelectorAll('.cover-tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.tab === tabName);
@@ -114,6 +114,11 @@ function switchCoverTab(tabName) {
     document.querySelectorAll('.cover-tab-content').forEach(content => {
         content.classList.toggle('active', content.dataset.tabContent === tabName);
     });
+
+    // 사용자 이미지 탭으로 전환 시 목록 로드
+    if (tabName === 'user') {
+        await loadUserCovers();
+    }
 }
 
 async function selectDefaultCover(coverPath) {
@@ -168,7 +173,8 @@ async function uploadCustomCover(file) {
         if (res.ok) {
             const data = await res.json();
             showCover(data.coverImage, 50);
-            closeCoverModal();
+            // 사용자 이미지 탭으로 전환하여 방금 업로드한 이미지 표시
+            await switchCoverTab('user');
             console.log('커스텀 커버 업로드 완료:', data.coverImage);
         } else {
             throw new Error('커버 업로드 실패');
@@ -289,4 +295,83 @@ function stopRepositioning() {
 function closeCoverModal() {
     const modal = document.getElementById('cover-modal');
     if (modal) modal.classList.add('hidden');
+}
+
+async function loadUserCovers() {
+    const gallery = document.getElementById('user-cover-gallery');
+    if (!gallery) return;
+
+    try {
+        const res = await secureFetch('/api/pages/covers/user', {
+            method: 'GET'
+        });
+
+        if (!res.ok) {
+            throw new Error('사용자 커버 목록 조회 실패');
+        }
+
+        const covers = await res.json();
+
+        if (covers.length === 0) {
+            gallery.innerHTML = '<p class="cover-gallery-empty">업로드된 커버 이미지가 없습니다.</p>';
+            return;
+        }
+
+        // 커버 이미지 렌더링
+        gallery.innerHTML = covers.map(cover => `
+            <div class="user-cover-option" data-cover="${cover.path}">
+                <img src="/covers/${cover.path}" alt="사용자 커버">
+                <button class="delete-cover-btn" data-filename="${cover.filename}" title="삭제">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
+        `).join('');
+
+        // 커버 선택 이벤트
+        gallery.querySelectorAll('.user-cover-option').forEach(option => {
+            option.addEventListener('click', async (e) => {
+                // 삭제 버튼 클릭 시에는 선택 이벤트 방지
+                if (e.target.closest('.delete-cover-btn')) return;
+
+                const coverPath = option.dataset.cover;
+                await selectDefaultCover(coverPath);
+            });
+        });
+
+        // 삭제 버튼 이벤트
+        gallery.querySelectorAll('.delete-cover-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const filename = btn.dataset.filename;
+                await deleteUserCover(filename);
+            });
+        });
+
+    } catch (error) {
+        console.error('사용자 커버 목록 로드 오류:', error);
+        gallery.innerHTML = '<p class="cover-gallery-empty" style="color: #f44;">커버 목록을 불러오는데 실패했습니다.</p>';
+    }
+}
+
+async function deleteUserCover(filename) {
+    if (!confirm('이 커버 이미지를 삭제하시겠습니까?')) {
+        return;
+    }
+
+    try {
+        const res = await secureFetch(`/api/pages/covers/${filename}`, {
+            method: 'DELETE'
+        });
+
+        if (res.ok) {
+            console.log('커버 이미지 삭제 완료:', filename);
+            await loadUserCovers(); // 목록 새로고침
+        } else {
+            const data = await res.json();
+            throw new Error(data.error || '커버 삭제 실패');
+        }
+    } catch (error) {
+        console.error('커버 삭제 오류:', error);
+        alert(error.message || '커버 이미지 삭제에 실패했습니다.');
+    }
 }

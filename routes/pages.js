@@ -31,6 +31,88 @@ module.exports = (dependencies) => {
     } = dependencies;
 
     /**
+     * 사용자 업로드 커버 이미지 목록 조회
+     * GET /api/pages/covers/user
+     */
+    router.get("/covers/user", authMiddleware, async (req, res) => {
+        const userId = req.user.id;
+
+        try {
+            const userCoversDir = path.join(__dirname, '..', 'covers', String(userId));
+
+            // 사용자 폴더가 없으면 빈 배열 반환
+            if (!fs.existsSync(userCoversDir)) {
+                return res.json([]);
+            }
+
+            // 디렉토리 내 파일 목록 읽기
+            const files = fs.readdirSync(userCoversDir);
+
+            // 이미지 파일만 필터링
+            const imageFiles = files.filter(file => {
+                const ext = path.extname(file).toLowerCase();
+                return ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
+            });
+
+            // 파일 정보 조회 (생성일자 기준 정렬)
+            const covers = imageFiles.map(file => {
+                const filePath = path.join(userCoversDir, file);
+                const stats = fs.statSync(filePath);
+                return {
+                    path: `${userId}/${file}`,
+                    filename: file,
+                    uploadedAt: stats.birthtime.toISOString()
+                };
+            }).sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+
+            res.json(covers);
+        } catch (error) {
+            logError("GET /api/pages/covers/user", error);
+            res.status(500).json({ error: "커버 목록 조회 실패" });
+        }
+    });
+
+    /**
+     * 사용자 업로드 커버 이미지 삭제
+     * DELETE /api/pages/covers/:filename
+     */
+    router.delete("/covers/:filename", authMiddleware, async (req, res) => {
+        const userId = req.user.id;
+        const filename = req.params.filename;
+
+        try {
+            const coverPath = `${userId}/${filename}`;
+            const filePath = path.join(__dirname, '..', 'covers', coverPath);
+
+            // 파일 존재 확인
+            if (!fs.existsSync(filePath)) {
+                return res.status(404).json({ error: "파일을 찾을 수 없습니다." });
+            }
+
+            // 해당 커버를 사용 중인 페이지가 있는지 확인
+            const [pages] = await pool.execute(
+                `SELECT id FROM pages WHERE cover_image = ? AND user_id = ?`,
+                [coverPath, userId]
+            );
+
+            if (pages.length > 0) {
+                return res.status(400).json({
+                    error: "해당 커버를 사용 중인 페이지가 있습니다. 먼저 페이지의 커버를 변경해주세요."
+                });
+            }
+
+            // 파일 삭제
+            fs.unlinkSync(filePath);
+
+            console.log("DELETE /api/pages/covers/:filename 삭제 완료:", coverPath);
+            res.json({ success: true });
+        } catch (error) {
+            logError("DELETE /api/pages/covers/:filename", error);
+            res.status(500).json({ error: "커버 삭제 실패" });
+        }
+    });
+
+    /**
      * 페이지 목록 조회 (소유한 페이지 + 공유받은 컬렉션의 페이지)
      * GET /api/pages
      */
@@ -441,15 +523,6 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "권한이 없습니다." });
             }
 
-            // 이전 커스텀 이미지 삭제 (기본 이미지가 아닌 경우)
-            const oldCover = rows[0].cover_image;
-            if (oldCover && !oldCover.startsWith('default/')) {
-                const oldPath = path.join(__dirname, '..', 'covers', oldCover);
-                fs.unlink(oldPath, (err) => {
-                    if (err) console.warn("이전 커버 삭제 실패:", err);
-                });
-            }
-
             // DB 업데이트
             const coverPath = `${userId}/${req.file.filename}`;
             await pool.execute(
@@ -502,14 +575,6 @@ module.exports = (dependencies) => {
             const values = [];
 
             if (coverImage !== undefined) {
-                // 기본 이미지 선택 시 이전 커스텀 이미지 삭제
-                const oldCover = rows[0].cover_image;
-                if (oldCover && !oldCover.startsWith('default/') && coverImage.startsWith('default/')) {
-                    const oldPath = path.join(__dirname, '..', 'covers', oldCover);
-                    fs.unlink(oldPath, (err) => {
-                        if (err) console.warn("이전 커버 삭제 실패:", err);
-                    });
-                }
                 updates.push('cover_image = ?');
                 values.push(coverImage);
             }
@@ -578,16 +643,7 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "권한이 없습니다." });
             }
 
-            // 커스텀 이미지 파일 삭제
-            const oldCover = rows[0].cover_image;
-            if (oldCover && !oldCover.startsWith('default/')) {
-                const oldPath = path.join(__dirname, '..', 'covers', oldCover);
-                fs.unlink(oldPath, (err) => {
-                    if (err) console.warn("커버 파일 삭제 실패:", err);
-                });
-            }
-
-            // DB 업데이트
+            // DB 업데이트 (파일은 삭제하지 않고 사용자 이미지 탭에 유지)
             await pool.execute(
                 `UPDATE pages SET cover_image = NULL, cover_position = 50, updated_at = NOW() WHERE id = ?`,
                 [id]
