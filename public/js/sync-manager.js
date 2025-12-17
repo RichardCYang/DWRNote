@@ -1,5 +1,5 @@
 /**
- * SSE 및 Yjs 동기화 관리 모듈
+ * WebSocket 및 Yjs 동기화 관리 모듈
  * 실시간 협업 편집을 위한 클라이언트 측 동기화 로직
  */
 
@@ -8,11 +8,14 @@ import { escapeHtml } from './ui-utils.js';
 import { showCover, hideCover } from './cover-manager.js';
 
 // 전역 상태
-let currentPageSync = null;
-let currentCollectionSync = null;
+let ws = null;
+let reconnectAttempts = 0;
+let reconnectTimer = null;
 let ydoc = null;
 let yXmlFragment = null;
 let yMetadata = null;
+let currentPageId = null;
+let currentCollectionId = null;
 
 const state = {
     editor: null,
@@ -33,6 +36,124 @@ export function initSyncManager(appState) {
 
     // Visibility API로 탭 전환 감지
     document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // WebSocket 연결
+    connectWebSocket();
+}
+
+/**
+ * WebSocket 연결
+ */
+function connectWebSocket() {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+    console.log('[WS] 연결 시도:', wsUrl);
+
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+        console.log('[WS] 연결 성공');
+        reconnectAttempts = 0;
+
+        // 페이지 재구독
+        if (currentPageId) {
+            subscribePage(currentPageId);
+        }
+
+        // 컬렉션 재구독
+        if (currentCollectionId) {
+            subscribeCollection(currentCollectionId);
+        }
+
+        // 사용자 알림 구독
+        subscribeUser();
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            const message = JSON.parse(event.data);
+            handleWebSocketMessage(message);
+        } catch (error) {
+            console.error('[WS] 메시지 파싱 오류:', error);
+        }
+    };
+
+    ws.onerror = (error) => {
+        console.error('[WS] 연결 오류:', error);
+    };
+
+    ws.onclose = () => {
+        console.log('[WS] 연결 종료');
+        ws = null;
+
+        // 재연결 시도
+        attemptReconnect();
+    };
+}
+
+/**
+ * WebSocket 재연결
+ */
+function attemptReconnect() {
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+    }
+
+    reconnectAttempts++;
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000); // 최대 30초
+
+    console.log(`[WS] ${delay}ms 후 재연결 시도 (${reconnectAttempts}번째)`);
+
+    reconnectTimer = setTimeout(() => {
+        connectWebSocket();
+    }, delay);
+}
+
+/**
+ * WebSocket 메시지 처리
+ */
+function handleWebSocketMessage(message) {
+    const { event, data } = message;
+
+    switch (event) {
+        case 'connected':
+            console.log('[WS] 서버 연결 확인:', data);
+            break;
+        case 'init':
+            handleInit(data);
+            break;
+        case 'yjs-update':
+            handleYjsUpdate(data);
+            break;
+        case 'user-joined':
+            handleUserJoined(data);
+            break;
+        case 'user-left':
+            handleUserLeft(data);
+            break;
+        case 'metadata-change':
+            handleMetadataChange(data);
+            break;
+        case 'page-created':
+            handlePageCreated(data);
+            break;
+        case 'page-deleted':
+            handlePageDeleted(data);
+            break;
+        case 'duplicate-login':
+            handleDuplicateLogin(data);
+            break;
+        case 'error':
+            console.error('[WS] 서버 오류:', data.message);
+            break;
+        default:
+            console.warn('[WS] 알 수 없는 이벤트:', event);
+    }
 }
 
 /**
@@ -48,6 +169,7 @@ export async function startPageSync(pageId, isEncrypted) {
     // 기존 연결 정리
     stopPageSync();
 
+    currentPageId = pageId;
     state.currentPageId = pageId;
 
     // Yjs 문서 생성
@@ -55,89 +177,10 @@ export async function startPageSync(pageId, isEncrypted) {
     yXmlFragment = ydoc.getXmlFragment('prosemirror');
     yMetadata = ydoc.getMap('metadata');
 
-    // SSE 연결
-    const eventSource = new EventSource(`/api/pages/${pageId}/sync`);
-
-    eventSource.addEventListener('init', (e) => {
-        try {
-            const data = JSON.parse(e.data);
-
-            // Yjs 상태 복원
-            const stateUpdate = Uint8Array.from(atob(data.state), c => c.charCodeAt(0));
-            Y.applyUpdate(ydoc, stateUpdate);
-
-            // Tiptap 에디터와 연결
-            setupEditorBinding();
-        } catch (error) {
-            console.error('[SyncManager] 초기 상태 처리 오류:', error);
-        }
-    });
-
-    eventSource.addEventListener('yjs-update', (e) => {
-        try {
-            const data = JSON.parse(e.data);
-            const update = Uint8Array.from(atob(data.update), c => c.charCodeAt(0));
-
-            // 원격 업데이트는 'remote' origin으로 표시
-            Y.applyUpdate(ydoc, update, 'remote');
-
-            // Yjs 메타데이터에서 콘텐츠 가져와서 에디터 업데이트
-            const content = yMetadata.get('content');
-            if (content && state.editor) {
-                const currentContent = state.editor.getHTML();
-                if (content !== currentContent) {
-                    // 에디터에 포커스가 있는지 확인
-                    const editorHasFocus = state.editor.view.hasFocus();
-
-                    if (editorHasFocus) {
-                        // 포커스가 있으면 업데이트 보류
-                        if (state.editor._setPendingRemoteUpdate) {
-                            state.editor._setPendingRemoteUpdate(content);
-                        }
-                    } else {
-                        // 포커스가 없으면 즉시 업데이트
-                        state.editor.commands.setContent(content, { emitUpdate: false });
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('[SyncManager] Yjs 업데이트 처리 오류:', error);
-        }
-    });
-
-    eventSource.addEventListener('user-joined', (e) => {
-        try {
-            const data = JSON.parse(e.data);
-            showUserNotification(`${data.username}님이 입장했습니다.`, data.color);
-        } catch (error) {
-            console.error('[SyncManager] user-joined 처리 오류:', error);
-        }
-    });
-
-    eventSource.addEventListener('user-left', (e) => {
-        try {
-            const data = JSON.parse(e.data);
-        } catch (error) {
-            console.error('[SyncManager] user-left 처리 오류:', error);
-        }
-    });
-
-    eventSource.onerror = (error) => {
-        console.error('[SyncManager] SSE 연결 오류:', error);
-        eventSource.close();
-
-        // 재연결 시도 (3초 후)
-        setTimeout(() => {
-            if (state.currentPageId === pageId) {
-                startPageSync(pageId, isEncrypted);
-            }
-        }, 3000);
-    };
-
-    currentPageSync = {
-        eventSource,
-        pageId
-    };
+    // WebSocket으로 페이지 구독
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        subscribePage(pageId);
+    }
 
     // Yjs 변경 감지 → 서버 전송
     ydoc.on('update', (update, origin) => {
@@ -149,12 +192,31 @@ export async function startPageSync(pageId, isEncrypted) {
 }
 
 /**
+ * 페이지 구독
+ */
+function subscribePage(pageId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn('[WS] WebSocket이 연결되지 않았습니다.');
+        return;
+    }
+
+    ws.send(JSON.stringify({
+        type: 'subscribe-page',
+        payload: { pageId }
+    }));
+
+    console.log('[WS] 페이지 구독:', pageId);
+}
+
+/**
  * 페이지 동기화 중지
  */
 export function stopPageSync() {
-    if (currentPageSync) {
-        currentPageSync.eventSource.close();
-        currentPageSync = null;
+    if (currentPageId && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'unsubscribe-page',
+            payload: { pageId: currentPageId }
+        }));
     }
 
     if (ydoc) {
@@ -164,31 +226,98 @@ export function stopPageSync() {
         yMetadata = null;
     }
 
+    currentPageId = null;
     state.currentPageId = null;
 }
 
 /**
  * Yjs 업데이트 서버 전송
  */
-async function sendYjsUpdate(pageId, update) {
-    try {
-        const response = await fetch(`/api/pages/${pageId}/sync-update`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/octet-stream',
-                'X-CSRF-Token': getCsrfToken()
-            },
-            body: update
-        });
+function sendYjsUpdate(pageId, update) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn('[WS] WebSocket이 연결되지 않았습니다.');
+        return;
+    }
 
-        if (!response.ok) {
-            console.error('[SyncManager] 업데이트 전송 실패:', response.status);
-            const text = await response.text();
-            console.error('[SyncManager] 응답:', text);
+    const base64Update = btoa(String.fromCharCode(...new Uint8Array(update)));
+
+    ws.send(JSON.stringify({
+        type: 'yjs-update',
+        payload: {
+            pageId,
+            update: base64Update
+        }
+    }));
+}
+
+/**
+ * 초기 상태 처리
+ */
+function handleInit(data) {
+    try {
+        // Yjs 상태 복원
+        const stateUpdate = Uint8Array.from(atob(data.state), c => c.charCodeAt(0));
+        Y.applyUpdate(ydoc, stateUpdate);
+
+        // Tiptap 에디터와 연결
+        setupEditorBinding();
+
+        console.log('[WS] 초기 상태 로드 완료');
+    } catch (error) {
+        console.error('[WS] 초기 상태 처리 오류:', error);
+    }
+}
+
+/**
+ * Yjs 업데이트 처리
+ */
+function handleYjsUpdate(data) {
+    try {
+        const update = Uint8Array.from(atob(data.update), c => c.charCodeAt(0));
+
+        // 원격 업데이트는 'remote' origin으로 표시
+        Y.applyUpdate(ydoc, update, 'remote');
+
+        // Yjs 메타데이터에서 콘텐츠 가져와서 에디터 업데이트
+        const content = yMetadata.get('content');
+        if (content && state.editor) {
+            const currentContent = state.editor.getHTML();
+            if (content !== currentContent) {
+                // 에디터에 포커스가 있는지 확인
+                const editorHasFocus = state.editor.view.hasFocus();
+
+                if (editorHasFocus) {
+                    // 포커스가 있으면 업데이트 보류
+                    if (state.editor._setPendingRemoteUpdate) {
+                        state.editor._setPendingRemoteUpdate(content);
+                    }
+                } else {
+                    // 포커스가 없으면 즉시 업데이트
+                    state.editor.commands.setContent(content, { emitUpdate: false });
+                }
+            }
         }
     } catch (error) {
-        console.error('[SyncManager] 업데이트 전송 오류:', error);
+        console.error('[WS] Yjs 업데이트 처리 오류:', error);
     }
+}
+
+/**
+ * 사용자 입장 처리
+ */
+function handleUserJoined(data) {
+    try {
+        showUserNotification(`${data.username}님이 입장했습니다.`, data.color);
+    } catch (error) {
+        console.error('[WS] user-joined 처리 오류:', error);
+    }
+}
+
+/**
+ * 사용자 퇴장 처리
+ */
+function handleUserLeft(data) {
+    // 필요 시 처리
 }
 
 /**
@@ -197,85 +326,125 @@ async function sendYjsUpdate(pageId, update) {
 export function startCollectionSync(collectionId) {
     stopCollectionSync();
 
+    currentCollectionId = collectionId;
     state.currentCollectionId = collectionId;
 
-    const eventSource = new EventSource(`/api/collections/${collectionId}/sync`);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        subscribeCollection(collectionId);
+    }
+}
 
-    eventSource.addEventListener('metadata-change', (e) => {
-        try {
-            const data = JSON.parse(e.data);
+/**
+ * 컬렉션 구독
+ */
+function subscribeCollection(collectionId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn('[WS] WebSocket이 연결되지 않았습니다.');
+        return;
+    }
 
-            // 커버 이미지 동기화
-            if (data.field === 'coverImage' && data.pageId === state.currentPageId) {
-                if (data.value) {
-                    showCover(data.value, 50);
-                } else {
-                    hideCover();
-                }
-            }
+    ws.send(JSON.stringify({
+        type: 'subscribe-collection',
+        payload: { collectionId }
+    }));
 
-            // 커버 위치 동기화
-            if (data.field === 'coverPosition' && data.pageId === state.currentPageId) {
-                const imageEl = document.getElementById('page-cover-image');
-                if (imageEl) {
-                    imageEl.style.backgroundPositionY = `${data.value}%`;
-                }
-            }
-
-            // 사이드바 업데이트
-            updatePageInSidebar(data.pageId, data.field, data.value);
-        } catch (error) {
-            console.error('[SyncManager] metadata-change 처리 오류:', error);
-        }
-    });
-
-    eventSource.addEventListener('page-created', (e) => {
-        try {
-            const data = JSON.parse(e.data);
-
-            // 페이지 목록 새로고침
-            if (state.fetchPageList) {
-                state.fetchPageList();
-            }
-        } catch (error) {
-            console.error('[SyncManager] page-created 처리 오류:', error);
-        }
-    });
-
-    eventSource.addEventListener('page-deleted', (e) => {
-        try {
-            const data = JSON.parse(e.data);
-
-            // 페이지 목록 새로고침
-            if (state.fetchPageList) {
-                state.fetchPageList();
-            }
-        } catch (error) {
-            console.error('[SyncManager] page-deleted 처리 오류:', error);
-        }
-    });
-
-    eventSource.onerror = (error) => {
-        console.error('[SyncManager] 컬렉션 SSE 오류:', error);
-        eventSource.close();
-    };
-
-    currentCollectionSync = {
-        eventSource,
-        collectionId
-    };
+    console.log('[WS] 컬렉션 구독:', collectionId);
 }
 
 /**
  * 컬렉션 동기화 중지
  */
 export function stopCollectionSync() {
-    if (currentCollectionSync) {
-        currentCollectionSync.eventSource.close();
-        currentCollectionSync = null;
+    if (currentCollectionId && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'unsubscribe-collection',
+            payload: { collectionId: currentCollectionId }
+        }));
     }
 
+    currentCollectionId = null;
     state.currentCollectionId = null;
+}
+
+/**
+ * 사용자 알림 구독
+ */
+function subscribeUser() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+    }
+
+    ws.send(JSON.stringify({
+        type: 'subscribe-user',
+        payload: {}
+    }));
+
+    console.log('[WS] 사용자 알림 구독');
+}
+
+/**
+ * 메타데이터 변경 처리
+ */
+function handleMetadataChange(data) {
+    try {
+        // 커버 이미지 동기화
+        if (data.field === 'coverImage' && data.pageId === state.currentPageId) {
+            if (data.value) {
+                showCover(data.value, 50);
+            } else {
+                hideCover();
+            }
+        }
+
+        // 커버 위치 동기화
+        if (data.field === 'coverPosition' && data.pageId === state.currentPageId) {
+            const imageEl = document.getElementById('page-cover-image');
+            if (imageEl) {
+                imageEl.style.backgroundPositionY = `${data.value}%`;
+            }
+        }
+
+        // 사이드바 업데이트
+        updatePageInSidebar(data.pageId, data.field, data.value);
+    } catch (error) {
+        console.error('[WS] metadata-change 처리 오류:', error);
+    }
+}
+
+/**
+ * 페이지 생성 처리
+ */
+function handlePageCreated(data) {
+    try {
+        // 페이지 목록 새로고침
+        if (state.fetchPageList) {
+            state.fetchPageList();
+        }
+    } catch (error) {
+        console.error('[WS] page-created 처리 오류:', error);
+    }
+}
+
+/**
+ * 페이지 삭제 처리
+ */
+function handlePageDeleted(data) {
+    try {
+        // 페이지 목록 새로고침
+        if (state.fetchPageList) {
+            state.fetchPageList();
+        }
+    } catch (error) {
+        console.error('[WS] page-deleted 처리 오류:', error);
+    }
+}
+
+/**
+ * 중복 로그인 처리
+ */
+function handleDuplicateLogin(data) {
+    alert(data.message || '다른 위치에서 로그인하여 현재 세션이 종료됩니다.');
+    window.location.href = '/login';
 }
 
 /**
@@ -364,27 +533,15 @@ function showInfo(message) {
 }
 
 /**
- * CSRF 토큰 가져오기
- */
-function getCsrfToken() {
-    const cookies = document.cookie.split('; ');
-    const csrfCookie = cookies.find(row => row.startsWith('nteok_csrf='));
-    return csrfCookie ? csrfCookie.split('=')[1] : '';
-}
-
-/**
  * 온라인 복구 핸들러
  */
 function handleOnline() {
-    if (state.currentPageId && !currentPageSync) {
-        startPageSync(state.currentPageId, false);
-    }
-
-    if (state.currentCollectionId && !currentCollectionSync) {
-        startCollectionSync(state.currentCollectionId);
-    }
-
     showInfo('네트워크 연결이 복구되었습니다.');
+
+    // WebSocket 재연결
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        connectWebSocket();
+    }
 }
 
 /**
@@ -395,11 +552,23 @@ function handleOffline() {
 }
 
 /**
+ * Visibility 변경 핸들러
+ */
+function handleVisibilityChange() {
+    if (!document.hidden) {
+        // WebSocket 연결 확인 및 재연결
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            connectWebSocket();
+        }
+    }
+}
+
+/**
  * Tiptap 에디터와 Yjs 바인딩 설정
  */
 function setupEditorBinding() {
     if (!state.editor || !ydoc || !yMetadata) {
-        console.error('[SyncManager] 에디터 바인딩 실패: 필수 요소 없음');
+        console.error('[WS] 에디터 바인딩 실패: 필수 요소 없음');
         return;
     }
 
@@ -420,7 +589,7 @@ function setupEditorBinding() {
             return;
         }
 
-        // Debounce (200ms)
+        // Debounce (50ms) - 실시간 반응
         if (updateTimeout) {
             clearTimeout(updateTimeout);
         }
@@ -433,7 +602,7 @@ function setupEditorBinding() {
                 // origin을 지정하지 않으면 로컬 업데이트로 처리됨
                 yMetadata.set('content', newContent);
             }
-        }, 200);
+        }, 50);
     });
 
     // 에디터 포커스 해제 시 보류 중인 원격 업데이트 적용
@@ -453,20 +622,6 @@ function setupEditorBinding() {
 
     // Yjs 원격 업데이트를 에디터에 적용할 때 사용할 플래그 저장
     state.editor._syncIsUpdating = false;
-}
 
-/**
- * Visibility 변경 핸들러
- */
-function handleVisibilityChange() {
-    if (!document.hidden) {
-        // SSE 연결 확인 및 재연결
-        if (currentPageSync && currentPageSync.eventSource.readyState !== EventSource.OPEN) {
-            startPageSync(currentPageSync.pageId, false);
-        }
-
-        if (currentCollectionSync && currentCollectionSync.eventSource.readyState !== EventSource.OPEN) {
-            startCollectionSync(currentCollectionSync.collectionId);
-        }
-    }
+    console.log('[WS] 에디터 바인딩 완료');
 }

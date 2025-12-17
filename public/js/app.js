@@ -67,9 +67,6 @@ import {
     hideCover,
     updateCoverButtonsVisibility
 } from './cover-manager.js';
-import {
-    initDuplicateLoginDetector
-} from './duplicate-login-detector.js';
 
 // ==================== Global State ====================
 const appState = {
@@ -855,9 +852,6 @@ async function init() {
 
     // 커버 이미지 관리자 초기화
     initCoverManager(appState);
-
-    // 중복 로그인 감지기 초기화
-    initDuplicateLoginDetector();
 
     // 검색 기능 초기화
     initSearch();

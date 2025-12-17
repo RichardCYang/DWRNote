@@ -16,6 +16,7 @@ const http = require("http");
 const certManager = require("./cert-manager");
 const multer = require("multer");
 const fs = require("fs");
+const WebSocket = require("ws");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -342,7 +343,7 @@ function createSession(user) {
         }
 
         // 중복 로그인 허용 모드: 기존 세션들에게 알림 전송
-        broadcastToUser(user.id, 'duplicate-login', {
+        wsBroadcastToUser(user.id, 'duplicate-login', {
             message: '다른 위치에서 로그인하여 현재 세션이 종료됩니다.',
             timestamp: new Date().toISOString()
         });
@@ -1108,14 +1109,14 @@ const sseConnectionLimiter = rateLimit({
 });
 
 /**
- * ==================== SSE 및 실시간 동기화 ====================
+ * ==================== WebSocket 및 실시간 동기화 ====================
  */
 
-// SSE 연결 풀
-const sseConnections = {
-    pages: new Map(), // pageId -> Set<{res, userId, username, color}>
-    collections: new Map(), // collectionId -> Set<{res, userId, permission}>
-    users: new Map() // userId -> Set<{res, sessionId}>
+// WebSocket 연결 풀
+const wsConnections = {
+    pages: new Map(), // pageId -> Set<{ws, userId, username, color}>
+    collections: new Map(), // collectionId -> Set<{ws, userId, permission}>
+    users: new Map() // userId -> Set<{ws, sessionId}>
 };
 
 // Yjs 문서 캐시 (메모리 관리)
@@ -1250,58 +1251,64 @@ async function loadOrCreateYjsDoc(pageId) {
 }
 
 /**
- * SSE 브로드캐스트 (페이지)
+ * WebSocket 브로드캐스트 (페이지)
  */
-function broadcastToPage(pageId, event, data, excludeUserId = null) {
-    const connections = sseConnections.pages.get(pageId);
+function wsBroadcastToPage(pageId, event, data, excludeUserId = null) {
+    const connections = wsConnections.pages.get(pageId);
     if (!connections) return;
 
-    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const message = JSON.stringify({ event, data });
 
     connections.forEach(conn => {
         if (excludeUserId && conn.userId === excludeUserId) return;
         try {
-            conn.res.write(message);
+            if (conn.ws.readyState === WebSocket.OPEN) {
+                conn.ws.send(message);
+            }
         } catch (error) {
-            console.error(`[SSE] 브로드캐스트 실패 (userId: ${conn.userId}):`, error);
+            console.error(`[WS] 브로드캐스트 실패 (userId: ${conn.userId}):`, error);
         }
     });
 }
 
 /**
- * SSE 브로드캐스트 (컬렉션)
+ * WebSocket 브로드캐스트 (컬렉션)
  */
-function broadcastToCollection(collectionId, event, data, excludeUserId = null) {
-    const connections = sseConnections.collections.get(collectionId);
+function wsBroadcastToCollection(collectionId, event, data, excludeUserId = null) {
+    const connections = wsConnections.collections.get(collectionId);
     if (!connections) return;
 
-    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const message = JSON.stringify({ event, data });
 
     connections.forEach(conn => {
         if (excludeUserId && conn.userId === excludeUserId) return;
         try {
-            conn.res.write(message);
+            if (conn.ws.readyState === WebSocket.OPEN) {
+                conn.ws.send(message);
+            }
         } catch (error) {
-            console.error(`[SSE] 브로드캐스트 실패 (userId: ${conn.userId}):`, error);
+            console.error(`[WS] 브로드캐스트 실패 (userId: ${conn.userId}):`, error);
         }
     });
 }
 
 /**
- * SSE 브로드캐스트 (사용자)
+ * WebSocket 브로드캐스트 (사용자)
  */
-function broadcastToUser(userId, event, data, excludeSessionId = null) {
-    const connections = sseConnections.users.get(userId);
+function wsBroadcastToUser(userId, event, data, excludeSessionId = null) {
+    const connections = wsConnections.users.get(userId);
     if (!connections) return;
 
-    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const message = JSON.stringify({ event, data });
 
     connections.forEach(conn => {
         if (excludeSessionId && conn.sessionId === excludeSessionId) return;
         try {
-            conn.res.write(message);
+            if (conn.ws.readyState === WebSocket.OPEN) {
+                conn.ws.send(message);
+            }
         } catch (error) {
-            console.error(`[SSE] 사용자 브로드캐스트 실패 (userId: ${userId}):`, error);
+            console.error(`[WS] 사용자 브로드캐스트 실패 (userId: ${userId}):`, error);
         }
     });
 }
@@ -1391,6 +1398,397 @@ const coverUpload = multer({
 });
 
 /**
+ * WebSocket 서버 초기화
+ */
+function initWebSocketServer(server) {
+    const wss = new WebSocket.Server({
+        server,
+        path: '/ws'
+    });
+
+    wss.on('connection', async (ws, req) => {
+        console.log('[WS] 새로운 WebSocket 연결');
+
+        // 쿠키 파싱
+        const cookies = {};
+        if (req.headers.cookie) {
+            req.headers.cookie.split(';').forEach(cookie => {
+                const parts = cookie.split('=');
+                cookies[parts[0].trim()] = (parts[1] || '').trim();
+            });
+        }
+
+        // 세션 인증
+        const sessionId = cookies[SESSION_COOKIE_NAME];
+        if (!sessionId) {
+            ws.close(1008, 'Unauthorized');
+            return;
+        }
+
+        const session = sessions.get(sessionId);
+        if (!session || !session.userId) {
+            ws.close(1008, 'Unauthorized');
+            return;
+        }
+
+        // 연결 메타데이터 저장
+        ws.userId = session.userId;
+        ws.username = session.username;
+        ws.sessionId = sessionId;
+        ws.isAlive = true;
+
+        // 핑/퐁 heartbeat
+        ws.on('pong', () => {
+            ws.isAlive = true;
+        });
+
+        // 메시지 핸들러
+        ws.on('message', async (message) => {
+            try {
+                const data = JSON.parse(message);
+                await handleWebSocketMessage(ws, data);
+            } catch (error) {
+                console.error('[WS] 메시지 처리 오류:', error);
+                ws.send(JSON.stringify({ event: 'error', data: { message: '메시지 처리 실패' } }));
+            }
+        });
+
+        // 연결 종료 핸들러
+        ws.on('close', () => {
+            console.log(`[WS] 연결 종료: userId=${ws.userId}`);
+            cleanupWebSocketConnection(ws);
+        });
+
+        // 에러 핸들러
+        ws.on('error', (error) => {
+            console.error('[WS] 연결 오류:', error);
+            cleanupWebSocketConnection(ws);
+        });
+
+        // 초기 연결 확인 메시지
+        ws.send(JSON.stringify({
+            event: 'connected',
+            data: {
+                userId: session.userId,
+                username: session.username
+            }
+        }));
+    });
+
+    // 30초마다 Heartbeat (끊어진 연결 정리)
+    const heartbeatInterval = setInterval(() => {
+        wss.clients.forEach((ws) => {
+            if (ws.isAlive === false) {
+                cleanupWebSocketConnection(ws);
+                return ws.terminate();
+            }
+            ws.isAlive = false;
+            ws.ping();
+        });
+    }, 30000);
+
+    wss.on('close', () => {
+        clearInterval(heartbeatInterval);
+    });
+
+    console.log('[WS] WebSocket 서버 초기화 완료 (경로: /ws)');
+    return wss;
+}
+
+/**
+ * WebSocket 메시지 핸들러
+ */
+async function handleWebSocketMessage(ws, data) {
+    const { type, payload } = data;
+
+    switch (type) {
+        case 'subscribe-page':
+            await handleSubscribePage(ws, payload);
+            break;
+        case 'unsubscribe-page':
+            handleUnsubscribePage(ws, payload);
+            break;
+        case 'subscribe-collection':
+            await handleSubscribeCollection(ws, payload);
+            break;
+        case 'unsubscribe-collection':
+            handleUnsubscribeCollection(ws, payload);
+            break;
+        case 'subscribe-user':
+            handleSubscribeUser(ws, payload);
+            break;
+        case 'yjs-update':
+            await handleYjsUpdate(ws, payload);
+            break;
+        default:
+            console.warn('[WS] 알 수 없는 메시지 타입:', type);
+    }
+}
+
+/**
+ * 페이지 구독
+ */
+async function handleSubscribePage(ws, payload) {
+    const { pageId } = payload;
+    const userId = ws.userId;
+
+    try {
+        // 권한 확인
+        const [rows] = await pool.execute(
+            `SELECT p.id, p.is_encrypted, p.collection_id, c.user_id as collection_owner, cs.permission
+             FROM pages p
+             LEFT JOIN collections c ON p.collection_id = c.id
+             LEFT JOIN collection_shares cs ON c.id = cs.collection_id AND cs.shared_with_user_id = ?
+             WHERE p.id = ? AND p.is_encrypted = 0
+               AND (c.user_id = ? OR cs.permission IN ('EDIT', 'ADMIN'))`,
+            [userId, pageId, userId]
+        );
+
+        if (!rows.length) {
+            ws.send(JSON.stringify({
+                event: 'error',
+                data: { message: '권한이 없거나 암호화된 페이지입니다.' }
+            }));
+            return;
+        }
+
+        // 연결 풀에 추가
+        if (!wsConnections.pages.has(pageId)) {
+            wsConnections.pages.set(pageId, new Set());
+        }
+
+        const userColor = getUserColor(userId);
+        const connection = { ws, userId, username: ws.username, color: userColor };
+        wsConnections.pages.get(pageId).add(connection);
+
+        // Yjs 상태 전송
+        const ydoc = await loadOrCreateYjsDoc(pageId);
+        const stateVector = Y.encodeStateAsUpdate(ydoc);
+        const base64State = Buffer.from(stateVector).toString('base64');
+
+        ws.send(JSON.stringify({
+            event: 'init',
+            data: {
+                state: base64State,
+                userId,
+                username: ws.username,
+                color: userColor
+            }
+        }));
+
+        // 다른 사용자들에게 입장 알림
+        wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color: userColor }, userId);
+
+        console.log(`[WS] 페이지 구독: pageId=${pageId}, userId=${userId}`);
+    } catch (error) {
+        console.error('[WS] 페이지 구독 오류:', error);
+        ws.send(JSON.stringify({ event: 'error', data: { message: '페이지 구독 실패' } }));
+    }
+}
+
+/**
+ * 페이지 구독 해제
+ */
+function handleUnsubscribePage(ws, payload) {
+    const { pageId } = payload;
+    const connections = wsConnections.pages.get(pageId);
+
+    if (connections) {
+        connections.forEach(conn => {
+            if (conn.ws === ws) {
+                connections.delete(conn);
+            }
+        });
+
+        if (connections.size === 0) {
+            wsConnections.pages.delete(pageId);
+
+            // 문서 저장
+            const docData = yjsDocuments.get(pageId);
+            if (docData) {
+                saveYjsDocToDatabase(pageId, docData.ydoc).catch(err => {
+                    console.error(`[WS] 페이지 저장 실패 (${pageId}):`, err);
+                });
+            }
+        }
+
+        wsBroadcastToPage(pageId, 'user-left', { userId: ws.userId }, ws.userId);
+    }
+}
+
+/**
+ * 컬렉션 구독
+ */
+async function handleSubscribeCollection(ws, payload) {
+    const { collectionId } = payload;
+    const userId = ws.userId;
+
+    try {
+        const permission = await getCollectionPermission(collectionId, userId);
+        if (!permission || !permission.permission) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: '권한 없음' } }));
+            return;
+        }
+
+        if (!wsConnections.collections.has(collectionId)) {
+            wsConnections.collections.set(collectionId, new Set());
+        }
+
+        const connection = { ws, userId, permission: permission.permission };
+        wsConnections.collections.get(collectionId).add(connection);
+
+        console.log(`[WS] 컬렉션 구독: collectionId=${collectionId}, userId=${userId}`);
+    } catch (error) {
+        console.error('[WS] 컬렉션 구독 오류:', error);
+        ws.send(JSON.stringify({ event: 'error', data: { message: '컬렉션 구독 실패' } }));
+    }
+}
+
+/**
+ * 컬렉션 구독 해제
+ */
+function handleUnsubscribeCollection(ws, payload) {
+    const { collectionId } = payload;
+    const connections = wsConnections.collections.get(collectionId);
+
+    if (connections) {
+        connections.forEach(conn => {
+            if (conn.ws === ws) {
+                connections.delete(conn);
+            }
+        });
+
+        if (connections.size === 0) {
+            wsConnections.collections.delete(collectionId);
+        }
+    }
+}
+
+/**
+ * 사용자 알림 구독
+ */
+function handleSubscribeUser(ws, payload) {
+    const userId = ws.userId;
+    const sessionId = ws.sessionId;
+
+    if (!wsConnections.users.has(userId)) {
+        wsConnections.users.set(userId, new Set());
+    }
+
+    const connection = { ws, sessionId };
+    wsConnections.users.get(userId).add(connection);
+
+    console.log(`[WS] 사용자 알림 구독: userId=${userId}`);
+}
+
+/**
+ * Yjs 업데이트 처리
+ */
+async function handleYjsUpdate(ws, payload) {
+    const { pageId, update } = payload;
+    const userId = ws.userId;
+
+    try {
+        // 권한 확인
+        const [rows] = await pool.execute(
+            `SELECT p.id FROM pages p
+             LEFT JOIN collections c ON p.collection_id = c.id
+             LEFT JOIN collection_shares cs ON c.id = cs.collection_id AND cs.shared_with_user_id = ?
+             WHERE p.id = ? AND p.is_encrypted = 0
+               AND (c.user_id = ? OR cs.permission IN ('EDIT', 'ADMIN'))`,
+            [userId, pageId, userId]
+        );
+
+        if (!rows.length) {
+            ws.send(JSON.stringify({ event: 'error', data: { message: '권한 없음' } }));
+            return;
+        }
+
+        // Base64 디코딩
+        const updateData = Buffer.from(update, 'base64');
+
+        // Yjs 문서에 적용
+        const ydoc = await loadOrCreateYjsDoc(pageId);
+        Y.applyUpdate(ydoc, updateData);
+
+        // 다른 클라이언트들에게 브로드캐스트
+        wsBroadcastToPage(pageId, 'yjs-update', { update }, userId);
+
+        // Debounced 저장
+        const docData = yjsDocuments.get(pageId);
+        if (docData) {
+            if (docData.saveTimeout) {
+                clearTimeout(docData.saveTimeout);
+            }
+            docData.saveTimeout = setTimeout(() => {
+                saveYjsDocToDatabase(pageId, ydoc).catch(err => {
+                    console.error(`[WS] Debounce 저장 실패 (${pageId}):`, err);
+                });
+            }, 1000);
+        }
+    } catch (error) {
+        console.error('[WS] Yjs 업데이트 처리 오류:', error);
+        ws.send(JSON.stringify({ event: 'error', data: { message: '업데이트 실패' } }));
+    }
+}
+
+/**
+ * WebSocket 연결 정리
+ */
+function cleanupWebSocketConnection(ws) {
+    const userId = ws.userId;
+
+    // 페이지 연결 정리
+    wsConnections.pages.forEach((connections, pageId) => {
+        connections.forEach(conn => {
+            if (conn.ws === ws) {
+                connections.delete(conn);
+                wsBroadcastToPage(pageId, 'user-left', { userId }, userId);
+            }
+        });
+
+        if (connections.size === 0) {
+            wsConnections.pages.delete(pageId);
+
+            // 문서 저장
+            const docData = yjsDocuments.get(pageId);
+            if (docData) {
+                saveYjsDocToDatabase(pageId, docData.ydoc).catch(err => {
+                    console.error(`[WS] 연결 종료 시 저장 실패 (${pageId}):`, err);
+                });
+            }
+        }
+    });
+
+    // 컬렉션 연결 정리
+    wsConnections.collections.forEach((connections, collectionId) => {
+        connections.forEach(conn => {
+            if (conn.ws === ws) {
+                connections.delete(conn);
+            }
+        });
+
+        if (connections.size === 0) {
+            wsConnections.collections.delete(collectionId);
+        }
+    });
+
+    // 사용자 연결 정리
+    if (wsConnections.users.has(userId)) {
+        const userConnections = wsConnections.users.get(userId);
+        userConnections.forEach(conn => {
+            if (conn.ws === ws) {
+                userConnections.delete(conn);
+            }
+        });
+
+        if (userConnections.size === 0) {
+            wsConnections.users.delete(userId);
+        }
+    }
+}
+
+/**
  * 서버 시작 (HTTPS 자동 설정)
  */
 (async () => {
@@ -1429,10 +1827,11 @@ const coverUpload = multer({
             getCollectionPermission,
             hasEncryptedPages,
             generateShareToken,
-            broadcastToCollection,
-            broadcastToPage,
-            broadcastToUser,
-            sseConnections,
+            wsConnections,
+            wsBroadcastToPage,
+            wsBroadcastToCollection,
+            wsBroadcastToUser,
+            WebSocket,
             getUserColor,
             loadOrCreateYjsDoc,
             saveYjsDocToDatabase,
@@ -1458,7 +1857,6 @@ const coverUpload = multer({
         const collectionsRoutes = require('./routes/collections')(routeDependencies);
         const pagesRoutes = require('./routes/pages')(routeDependencies);
         const sharesRoutes = require('./routes/shares')(routeDependencies);
-        const syncRoutes = require('./routes/sync')(routeDependencies);
         const totpRoutes = require('./routes/totp')(routeDependencies);
         const passkeyRoutes = require('./routes/passkey')(routeDependencies);
 
@@ -1468,7 +1866,6 @@ const coverUpload = multer({
         app.use('/api/collections', collectionsRoutes);
         app.use('/api/pages', pagesRoutes);
         app.use('/api', sharesRoutes);
-        app.use('/api', syncRoutes);
         app.use('/api/totp', totpRoutes);
         app.use('/api/passkey', passkeyRoutes);
 
@@ -1507,6 +1904,9 @@ const coverUpload = multer({
                     console.log('='.repeat(80) + '\n');
                 });
 
+                // WebSocket 서버 초기화
+                initWebSocketServer(httpsServer);
+
                 // HTTP -> HTTPS 리다이렉트 서버 (포트 80)
                 if (process.env.ENABLE_HTTP_REDIRECT === 'true') {
                     const HTTP_REDIRECT_PORT = 80;
@@ -1537,9 +1937,12 @@ const coverUpload = multer({
                 console.error('='.repeat(80) + '\n');
 
                 // HTTP 모드로 폴백
-                app.listen(PORT, () => {
+                const httpServer = app.listen(PORT, () => {
                     console.log(`⚠️  NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
                 });
+
+                // WebSocket 서버 초기화
+                initWebSocketServer(httpServer);
             }
         } else {
             // HTTPS 설정이 없는 경우 - HTTP 모드
@@ -1550,9 +1953,12 @@ const coverUpload = multer({
             console.log('   - DUCKDNS_TOKEN=your-duckdns-token');
             console.log('='.repeat(80) + '\n');
 
-            app.listen(PORT, () => {
+            const httpServer = app.listen(PORT, () => {
                 console.log(`NTEOK 앱이 HTTP로 실행 중: http://localhost:${PORT}`);
             });
+
+            // WebSocket 서버 초기화
+            initWebSocketServer(httpServer);
         }
 
     } catch (error) {

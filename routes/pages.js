@@ -23,7 +23,7 @@ module.exports = (dependencies) => {
         generatePageId,
         formatDateForDb,
         getCollectionPermission,
-        broadcastToCollection,
+        wsBroadcastToCollection,
         logError,
         coverUpload,
         path,
@@ -428,7 +428,7 @@ module.exports = (dependencies) => {
             console.log("PUT /api/pages/:id 수정 완료:", id);
 
             if (titleFromBody && titleFromBody !== existing.title) {
-                broadcastToCollection(existing.collection_id, 'metadata-change', {
+                wsBroadcastToCollection(existing.collection_id, 'metadata-change', {
                     pageId: id,
                     field: 'title',
                     value: newTitle
@@ -436,7 +436,7 @@ module.exports = (dependencies) => {
             }
 
             if (iconFromBody !== undefined && newIcon !== existing.icon) {
-                broadcastToCollection(existing.collection_id, 'metadata-change', {
+                wsBroadcastToCollection(existing.collection_id, 'metadata-change', {
                     pageId: id,
                     field: 'icon',
                     value: newIcon
@@ -569,8 +569,8 @@ module.exports = (dependencies) => {
                 [coverPath, id]
             );
 
-            // SSE 브로드캐스트
-            broadcastToCollection(rows[0].collection_id, 'metadata-change', {
+            // WebSocket 브로드캐스트
+            wsBroadcastToCollection(rows[0].collection_id, 'metadata-change', {
                 pageId: id,
                 field: 'coverImage',
                 value: coverPath
@@ -635,16 +635,16 @@ module.exports = (dependencies) => {
                 values
             );
 
-            // SSE 브로드캐스트
+            // WebSocket 브로드캐스트
             if (coverImage !== undefined) {
-                broadcastToCollection(rows[0].collection_id, 'metadata-change', {
+                wsBroadcastToCollection(rows[0].collection_id, 'metadata-change', {
                     pageId: id,
                     field: 'coverImage',
                     value: coverImage
                 }, userId);
             }
             if (typeof coverPosition === 'number') {
-                broadcastToCollection(rows[0].collection_id, 'metadata-change', {
+                wsBroadcastToCollection(rows[0].collection_id, 'metadata-change', {
                     pageId: id,
                     field: 'coverPosition',
                     value: Math.max(0, Math.min(100, coverPosition))
@@ -688,8 +688,8 @@ module.exports = (dependencies) => {
                 [id]
             );
 
-            // SSE 브로드캐스트
-            broadcastToCollection(rows[0].collection_id, 'metadata-change', {
+            // WebSocket 브로드캐스트
+            wsBroadcastToCollection(rows[0].collection_id, 'metadata-change', {
                 pageId: id,
                 field: 'coverImage',
                 value: null
