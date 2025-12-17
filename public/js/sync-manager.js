@@ -16,6 +16,7 @@ let yXmlFragment = null;
 let yMetadata = null;
 let currentPageId = null;
 let currentCollectionId = null;
+let lastLocalUpdateTime = 0;
 
 const state = {
     editor: null,
@@ -228,6 +229,7 @@ export function stopPageSync() {
 
     currentPageId = null;
     state.currentPageId = null;
+    lastLocalUpdateTime = 0;
 }
 
 /**
@@ -283,16 +285,18 @@ function handleYjsUpdate(data) {
         if (content && state.editor) {
             const currentContent = state.editor.getHTML();
             if (content !== currentContent) {
-                // 에디터에 포커스가 있는지 확인
+                // 에디터에 포커스가 있고 최근 200ms 이내에 로컬 업데이트가 있었는지 확인
                 const editorHasFocus = state.editor.view.hasFocus();
+                const timeSinceLastUpdate = Date.now() - lastLocalUpdateTime;
+                const isRecentlyTyping = timeSinceLastUpdate < 200;
 
-                if (editorHasFocus) {
-                    // 포커스가 있으면 업데이트 보류
+                if (editorHasFocus && isRecentlyTyping) {
+                    // 사용자가 타이핑 중이면 업데이트 보류
                     if (state.editor._setPendingRemoteUpdate) {
                         state.editor._setPendingRemoteUpdate(content);
                     }
                 } else {
-                    // 포커스가 없으면 즉시 업데이트
+                    // 타이핑 중이 아니거나 포커스가 없으면 즉시 업데이트
                     state.editor.commands.setContent(content, { emitUpdate: false });
                 }
             }
@@ -588,6 +592,9 @@ function setupEditorBinding() {
         if (isUpdating) {
             return;
         }
+
+        // 마지막 로컬 업데이트 시간 기록
+        lastLocalUpdateTime = Date.now();
 
         // Debounce (50ms) - 실시간 반응
         if (updateTimeout) {
