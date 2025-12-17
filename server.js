@@ -1475,7 +1475,7 @@ function initWebSocketServer(server) {
         }));
     });
 
-    // 30초마다 Heartbeat (끊어진 연결 정리)
+    // 60초마다 Heartbeat (끊어진 연결 정리)
     const heartbeatInterval = setInterval(() => {
         wss.clients.forEach((ws) => {
             if (ws.isAlive === false) {
@@ -1485,7 +1485,7 @@ function initWebSocketServer(server) {
             ws.isAlive = false;
             ws.ping();
         });
-    }, 30000);
+    }, 60000);
 
     wss.on('close', () => {
         clearInterval(heartbeatInterval);

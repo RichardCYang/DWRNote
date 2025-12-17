@@ -579,17 +579,24 @@ export async function saveCurrentPage() {
 /**
  * 공유 컬렉션 키 조회 (E2EE 시스템 재설계)
  */
-async function getCollectionKey(collectionId) {
-    try {
-        const res = await secureFetch(`/api/collections/${encodeURIComponent(collectionId)}/encryption-key`);
-        if (!res.ok) {
-            throw new Error("컬렉션 키 조회 실패");
+async function getCollectionKey(collectionId, retries = 3) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const res = await secureFetch(`/api/collections/${encodeURIComponent(collectionId)}/encryption-key`);
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(errorData.error || "컬렉션 키 조회 실패");
+            }
+            const data = await res.json();
+            return await cryptoManager.decryptCollectionKey(data.encryptedKey);
+        } catch (error) {
+            console.error(`컬렉션 키 조회 오류 (시도 ${attempt}/${retries}):`, error);
+            if (attempt === retries) {
+                throw error;
+            }
+            // 재시도 전 짧은 대기 (500ms)
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
-        const data = await res.json();
-        return await cryptoManager.decryptCollectionKey(data.encryptedKey);
-    } catch (error) {
-        console.error("컬렉션 키 조회 오류:", error);
-        throw error;
     }
 }
 

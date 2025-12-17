@@ -117,8 +117,8 @@ module.exports = (dependencies) => {
         const userId = req.user.id;
 
         try {
-            const { hasAccess, isOwner } = await getCollectionPermission(collectionId, userId);
-            if (!hasAccess) {
+            const { permission, isOwner } = await getCollectionPermission(collectionId, userId);
+            if (!permission) {
                 return res.status(403).json({ error: "접근 권한이 없습니다." });
             }
 
