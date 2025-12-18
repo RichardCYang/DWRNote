@@ -32,6 +32,7 @@ module.exports = (dependencies) => {
             const [rows] = await pool.execute(
                 `SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at,
                         c.user_id as owner_id, c.is_encrypted,
+                        c.default_encryption, c.enforce_encryption,
                         CASE
                             WHEN c.user_id = ? THEN 'OWNER'
                             ELSE cs.permission
@@ -53,7 +54,9 @@ module.exports = (dependencies) => {
                 isOwner: row.owner_id === userId,
                 permission: row.permission,
                 isShared: row.share_count > 0,
-                isEncrypted: Boolean(row.is_encrypted)
+                isEncrypted: Boolean(row.is_encrypted),
+                defaultEncryption: Boolean(row.default_encryption),
+                enforceEncryption: Boolean(row.enforce_encryption)
             }));
 
             res.json(list);
@@ -105,6 +108,59 @@ module.exports = (dependencies) => {
         } catch (error) {
             logError("DELETE /api/collections/:id", error);
             res.status(500).json({ error: "컬렉션 삭제에 실패했습니다." });
+        }
+    });
+
+    /**
+     * 컬렉션 설정 업데이트 (소유자만 가능)
+     * PUT /api/collections/:id
+     * body: { name?, defaultEncryption?, enforceEncryption? }
+     */
+    router.put("/:id", authMiddleware, async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            const { isOwner } = await getCollectionPermission(id, userId);
+            if (!isOwner) {
+                return res.status(403).json({ error: "컬렉션 소유자만 설정을 변경할 수 있습니다." });
+            }
+
+            const updates = [];
+            const values = [];
+
+            if (typeof req.body.name === 'string') {
+                const name = sanitizeInput(req.body.name.trim());
+                updates.push('name = ?');
+                values.push(name);
+            }
+
+            if (typeof req.body.defaultEncryption === 'boolean') {
+                updates.push('default_encryption = ?');
+                values.push(req.body.defaultEncryption ? 1 : 0);
+            }
+
+            if (typeof req.body.enforceEncryption === 'boolean') {
+                updates.push('enforce_encryption = ?');
+                values.push(req.body.enforceEncryption ? 1 : 0);
+            }
+
+            if (updates.length === 0) {
+                return res.status(400).json({ error: "업데이트할 내용이 없습니다." });
+            }
+
+            updates.push('updated_at = NOW()');
+            values.push(id);
+
+            await pool.execute(
+                `UPDATE collections SET ${updates.join(', ')} WHERE id = ?`,
+                values
+            );
+
+            res.json({ ok: true });
+        } catch (error) {
+            logError("PUT /api/collections/:id", error);
+            res.status(500).json({ error: "컬렉션 설정 업데이트에 실패했습니다." });
         }
     });
 

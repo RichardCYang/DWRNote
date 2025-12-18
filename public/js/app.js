@@ -24,7 +24,8 @@ import {
     showDecryptionModal,
     closeDecryptionModal,
     bindEncryptionModal,
-    bindDecryptionModal
+    bindDecryptionModal,
+    handlePermanentDecryption
 } from './encryption-manager.js';
 import {
     openShareModal,
@@ -116,6 +117,10 @@ async function handlePageListClick(event, state) {
             const showEncryptOption = collection && collection.isShared && !collection.isEncrypted;
 
             menuItems = `
+                <button data-action="collection-settings" data-collection-id="${escapeHtml(collectionId)}">
+                    <i class="fa-solid fa-cog"></i>
+                    컬렉션 설정
+                </button>
                 <button data-action="share-collection" data-collection-id="${escapeHtml(collectionId)}">
                     <i class="fa-solid fa-share-nodes"></i>
                     컬렉션 공유
@@ -140,10 +145,16 @@ async function handlePageListClick(event, state) {
     }
 
     // 컬렉션 메뉴 액션
-    const colMenuAction = event.target.closest("#context-menu button[data-action^='share-collection'], #context-menu button[data-action^='delete-collection'], #context-menu button[data-action^='encrypt-collection']");
+    const colMenuAction = event.target.closest("#context-menu button[data-action^='collection-settings'], #context-menu button[data-action^='share-collection'], #context-menu button[data-action^='delete-collection'], #context-menu button[data-action^='encrypt-collection']");
     if (colMenuAction) {
         const action = colMenuAction.dataset.action;
         const colId = colMenuAction.dataset.collectionId;
+
+        if (action === "collection-settings" && colId) {
+            await showCollectionSettingsModal(colId);
+            closeContextMenu();
+            return;
+        }
 
         if (action === "share-collection" && colId) {
             const collection = appState.collections.find(c => c.id === colId);
@@ -284,6 +295,10 @@ async function handlePageListClick(event, state) {
                         <i class="fa-solid fa-icons"></i>
                         아이콘 설정
                     </button>
+                    <button data-action="permanent-decrypt" data-page-id="${escapeHtml(pageId)}">
+                        <i class="fa-solid fa-unlock"></i>
+                        암호화 해제
+                    </button>
                     <button data-action="toggle-share" data-page-id="${escapeHtml(pageId)}" data-share-allowed="${shareAllowed ? 'true' : 'false'}">
                         <i class="fa-solid fa-${shareAllowed ? 'eye-slash' : 'eye'}"></i>
                         ${shareAllowed ? '공유 비허용' : '공유 허용'}
@@ -299,6 +314,10 @@ async function handlePageListClick(event, state) {
                         <i class="fa-solid fa-icons"></i>
                         아이콘 설정
                     </button>
+                    <button data-action="permanent-decrypt" data-page-id="${escapeHtml(pageId)}">
+                        <i class="fa-solid fa-unlock"></i>
+                        암호화 해제
+                    </button>
                     <button data-action="delete-page" data-page-id="${escapeHtml(pageId)}">
                         <i class="fa-regular fa-trash-can"></i>
                         페이지 삭제
@@ -310,6 +329,10 @@ async function handlePageListClick(event, state) {
                 <button data-action="set-icon" data-page-id="${escapeHtml(pageId)}">
                     <i class="fa-solid fa-icons"></i>
                     아이콘 설정
+                </button>
+                <button data-action="encrypt-page" data-page-id="${escapeHtml(pageId)}">
+                    <i class="fa-solid fa-lock"></i>
+                    암호화 설정
                 </button>
                 <button data-action="delete-page" data-page-id="${escapeHtml(pageId)}">
                     <i class="fa-regular fa-trash-can"></i>
@@ -323,7 +346,7 @@ async function handlePageListClick(event, state) {
     }
 
     // 페이지 메뉴 액션
-    const pageMenuAction = event.target.closest("#context-menu button[data-action^='set-icon'], #context-menu button[data-action^='delete-page'], #context-menu button[data-action^='toggle-share']");
+    const pageMenuAction = event.target.closest("#context-menu button[data-action^='set-icon'], #context-menu button[data-action^='encrypt-page'], #context-menu button[data-action^='permanent-decrypt'], #context-menu button[data-action^='delete-page'], #context-menu button[data-action^='toggle-share']");
     if (pageMenuAction) {
         const action = pageMenuAction.dataset.action;
         const pageId = pageMenuAction.dataset.pageId;
@@ -333,6 +356,24 @@ async function handlePageListClick(event, state) {
             closeContextMenu();
             return;
         }
+
+        if (action === "encrypt-page" && pageId) {
+            const page = appState.pages.find(p => p.id === pageId);
+            if (page && page.isEncrypted) {
+                alert('이미 암호화된 페이지입니다.');
+            } else {
+                showEncryptionModal(pageId);
+            }
+            closeContextMenu();
+            return;
+        }
+
+        if (action === "permanent-decrypt" && pageId) {
+            closeContextMenu();
+            await handlePermanentDecryption(pageId);
+            return;
+        }
+
 
         if (action === "toggle-share" && pageId) {
             const currentShareAllowed = pageMenuAction.dataset.shareAllowed === 'true';
@@ -440,6 +481,15 @@ async function handlePageListClick(event, state) {
     if (!pageId || pageId === state.currentPageId) return;
 
     closeContextMenu();
+
+    // 암호화된 페이지인지 확인
+    const page = state.pages.find(p => p.id === pageId);
+    if (page && page.isEncrypted) {
+        // 암호화된 페이지 클릭 시 복호화 모달 표시
+        showDecryptionModal(page);
+        return;
+    }
+
     await loadPage(pageId);
 }
 
@@ -867,6 +917,7 @@ async function init() {
     bindEncryptionModal();
     bindDecryptionModal();
     bindShareModal();
+    bindCollectionSettingsModal();
     bindReadonlyWarningModal();
     bindDeletePermissionModal();
     bindEncryptPermissionModal();
@@ -875,462 +926,155 @@ async function init() {
     bindTotpModals();
     bindPasskeyModals();
     bindAccountManagementButtons();
-    bindPasswordReconfirmModal();
-    bindMigrationModal();
 
     // 데이터 로드
     await fetchAndDisplayCurrentUser();
     await fetchCollections();
     await fetchPageList();
-
-    // 마스터 키 초기화 및 마이그레이션 확인
-    await initializeMasterKeyIfNeeded();
 }
 
-// ==================== Master Key Initialization ====================
-// 전역 Promise resolver for password reconfirmation
-let passwordReconfirmResolver = null;
+// ==================== 마스터 키 시스템 제거됨 ====================
+// 선택적 암호화 시스템으로 변경되어 마스터 키 관련 코드 제거됨
+
+// ==================== Collection Settings ====================
+let currentSettingsCollectionId = null;
 
 /**
- * 마스터 키 초기화 필요 시 비밀번호 재확인 모달 표시
+ * 컬렉션 설정 모달 표시
  */
-async function initializeMasterKeyIfNeeded() {
-    if (!window.cryptoManager) {
-        console.error('cryptoManager가 초기화되지 않았습니다!');
+async function showCollectionSettingsModal(collectionId) {
+    const collection = appState.collections.find(c => c.id === collectionId);
+    if (!collection) {
+        alert('컬렉션을 찾을 수 없습니다.');
         return;
     }
 
-    // 이미 마스터 키가 초기화되어 있으면 마이그레이션으로 진행
-    if (window.cryptoManager.isMasterKeyInitialized()) {
-        await checkAndShowMigrationModal();
+    if (!collection.isOwner) {
+        alert('컬렉션 소유자만 설정을 변경할 수 있습니다.');
         return;
     }
 
-    // 비밀번호 재확인 대기
-    await showPasswordReconfirmModal();
+    currentSettingsCollectionId = collectionId;
 
-    // 마스터 키가 초기화된 후 마이그레이션 확인
-    await checkAndShowMigrationModal();
-}
+    // 현재 설정 값 로드
+    const defaultEncryptionCheckbox = document.getElementById('collection-default-encryption');
+    const enforceEncryptionCheckbox = document.getElementById('collection-enforce-encryption');
 
-/**
- * 비밀번호 재확인 모달 표시 (Promise 반환)
- */
-function showPasswordReconfirmModal() {
-    return new Promise((resolve) => {
-        // resolver 저장
-        passwordReconfirmResolver = resolve;
-
-        const modal = document.getElementById('password-reconfirm-modal');
-        if (modal) {
-            modal.classList.remove('hidden');
-            // 포커스 설정
-            setTimeout(() => {
-                const passwordInput = document.getElementById('reconfirm-password');
-                if (passwordInput) {
-                    passwordInput.focus();
-                }
-            }, 100);
-        }
-    });
-}
-
-/**
- * 비밀번호 재확인 모달 닫기
- */
-function closePasswordReconfirmModal() {
-    const modal = document.getElementById('password-reconfirm-modal');
-    if (modal) {
-        modal.classList.add('hidden');
+    if (defaultEncryptionCheckbox) {
+        defaultEncryptionCheckbox.checked = collection.defaultEncryption || false;
+    }
+    if (enforceEncryptionCheckbox) {
+        enforceEncryptionCheckbox.checked = collection.enforceEncryption || false;
     }
 
-    // 에러 메시지 초기화
-    const errorEl = document.getElementById('reconfirm-error');
-    if (errorEl) {
-        errorEl.textContent = '';
-    }
-
-    // 비밀번호 입력 초기화
-    const passwordInput = document.getElementById('reconfirm-password');
-    if (passwordInput) {
-        passwordInput.value = '';
-    }
-}
-
-/**
- * 비밀번호 재확인 폼 바인딩
- */
-function bindPasswordReconfirmModal() {
-    const form = document.getElementById('password-reconfirm-form');
-
-    if (form) {
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            await handlePasswordReconfirm();
-        });
-    }
-}
-
-/**
- * 비밀번호 재확인 처리
- */
-async function handlePasswordReconfirm() {
-    const passwordInput = document.getElementById('reconfirm-password');
-    const errorEl = document.getElementById('reconfirm-error');
-    const submitBtn = document.querySelector('#password-reconfirm-form button[type="submit"]');
-
-    if (!passwordInput) return;
-
-    const password = passwordInput.value;
-
-    if (submitBtn) {
-        submitBtn.disabled = true;
-        submitBtn.textContent = '확인 중...';
-    }
-
-    try {
-        // 서버에 비밀번호 확인 (CSRF 토큰 포함)
-        const res = await secureFetch('/api/auth/verify-password', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ password })
-        });
-
-        if (!res.ok) {
-            throw new Error('비밀번호가 올바르지 않습니다.');
-        }
-
-        const data = await res.json();
-
-        // 마스터 키 초기화
-        let masterKeySalt = data.masterKeySalt;
-
-        if (!masterKeySalt) {
-            // 신규 사용자: salt 생성
-            masterKeySalt = await window.cryptoManager.initializeMasterKey(password);
-
-            // 서버에 salt 저장 (CSRF 토큰 포함)
-            await secureFetch('/api/auth/master-key-salt', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ masterKeySalt })
-            });
-        } else {
-            // 기존 사용자: salt로 마스터 키 초기화
-            await window.cryptoManager.initializeMasterKey(password, masterKeySalt);
-        }
-
-        // 모달 닫기
-        closePasswordReconfirmModal();
-
-        // Promise resolve (마스터 키 초기화 완료 신호)
-        if (passwordReconfirmResolver) {
-            passwordReconfirmResolver();
-            passwordReconfirmResolver = null;
-        }
-
-    } catch (error) {
-        console.error('비밀번호 확인 오류:', error);
-        if (errorEl) {
-            errorEl.textContent = error.message || '비밀번호 확인에 실패했습니다.';
-        }
-    } finally {
-        if (submitBtn) {
-            submitBtn.disabled = false;
-            submitBtn.textContent = '확인';
-        }
-    }
-}
-
-// ==================== Migration System ====================
-/**
- * 구 형식 암호화 페이지 감지 및 마이그레이션 모달 표시
- */
-async function checkAndShowMigrationModal() {
-    // 구 형식 암호화 페이지 찾기 (content가 "SALT:"로 시작)
-    const oldEncryptedPages = appState.pages.filter(page => {
-        return page.isEncrypted && page.content && page.content.startsWith('SALT:');
-    });
-
-    if (oldEncryptedPages.length > 0) {
-        console.log(`${oldEncryptedPages.length}개의 구 형식 암호화 페이지 감지됨`);
-        showMigrationModal(oldEncryptedPages);
-    }
-}
-
-/**
- * 마이그레이션 모달 표시
- */
-function showMigrationModal(oldEncryptedPages) {
-    const modal = document.getElementById('migration-modal');
-    const pageCountEl = document.getElementById('migration-page-count');
-
-    if (pageCountEl) {
-        pageCountEl.textContent = oldEncryptedPages.length;
-    }
-
+    // 모달 표시
+    const modal = document.getElementById('collection-settings-modal');
     if (modal) {
         modal.classList.remove('hidden');
     }
-
-    // 전역에 페이지 목록 저장
-    window.oldEncryptedPages = oldEncryptedPages;
 }
 
 /**
- * 마이그레이션 모달 닫기
+ * 컬렉션 설정 모달 닫기
  */
-function closeMigrationModal() {
-    const modal = document.getElementById('migration-modal');
+function closeCollectionSettingsModal() {
+    const modal = document.getElementById('collection-settings-modal');
     if (modal) {
         modal.classList.add('hidden');
     }
 
-    // 에러 메시지 초기화
-    const errorEl = document.getElementById('migration-error');
+    const errorEl = document.getElementById('collection-settings-error');
     if (errorEl) {
         errorEl.textContent = '';
     }
 
-    // 진행 상태 숨기기
-    const progressEl = document.getElementById('migration-progress');
-    if (progressEl) {
-        progressEl.style.display = 'none';
-    }
+    currentSettingsCollectionId = null;
 }
 
 /**
- * 마이그레이션 폼 바인딩
+ * 컬렉션 설정 저장
  */
-function bindMigrationModal() {
-    const form = document.getElementById('migration-form');
-    const skipBtn = document.getElementById('skip-migration-btn');
+async function saveCollectionSettings(event) {
+    event.preventDefault();
 
-    if (form) {
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            await handleMigration();
-        });
-    }
-
-    if (skipBtn) {
-        skipBtn.addEventListener('click', () => {
-            closeMigrationModal();
-        });
-    }
-}
-
-/**
- * 마이그레이션 실행
- */
-async function handleMigration() {
-    const passwordInput = document.getElementById('migration-password');
-    const errorEl = document.getElementById('migration-error');
-    const progressEl = document.getElementById('migration-progress');
-    const progressBar = document.getElementById('migration-progress-bar');
-    const currentEl = document.getElementById('migration-current');
-    const totalEl = document.getElementById('migration-total');
-    const submitBtn = document.querySelector('#migration-form button[type="submit"]');
-
-    if (!passwordInput || !window.oldEncryptedPages) {
+    if (!currentSettingsCollectionId) {
         return;
     }
 
-    const password = passwordInput.value;
-    const pages = window.oldEncryptedPages;
+    const defaultEncryption = document.getElementById('collection-default-encryption')?.checked || false;
+    const enforceEncryption = document.getElementById('collection-enforce-encryption')?.checked || false;
+    const errorEl = document.getElementById('collection-settings-error');
+    const submitBtn = event.target.querySelector('button[type="submit"]');
 
-    // 마스터 키 초기화 확인
-    if (!window.cryptoManager.isMasterKeyInitialized()) {
-        if (errorEl) {
-            errorEl.textContent = '마스터 키가 초기화되지 않았습니다. 다시 로그인해 주세요.';
-        }
-        return;
-    }
-
-    // 진행 상태 표시
-    if (progressEl) {
-        progressEl.style.display = 'block';
-    }
-    if (totalEl) {
-        totalEl.textContent = pages.length;
-    }
     if (submitBtn) {
         submitBtn.disabled = true;
+        submitBtn.textContent = '저장 중...';
     }
-
-    let successCount = 0;
 
     try {
-        for (let i = 0; i < pages.length; i++) {
-            const page = pages[i];
-
-            if (currentEl) {
-                currentEl.textContent = i + 1;
-            }
-            if (progressBar) {
-                progressBar.style.width = `${((i + 1) / pages.length) * 100}%`;
-            }
-
-            try {
-                // 1. 구 형식으로 복호화
-                const decryptedTitle = await window.cryptoManager.decrypt(page.title, password);
-                const decryptedContent = await window.cryptoManager.decrypt(page.content, password);
-
-                // 2. 검색 키워드 추출
-                function extractSearchKeywords(title, htmlContent) {
-                    const tempDiv = document.createElement('div');
-                    tempDiv.innerHTML = htmlContent;
-                    const textContent = tempDiv.textContent || '';
-                    const fullText = title + ' ' + textContent;
-                    const words = fullText
-                        .toLowerCase()
-                        .replace(/[^\w\sㄱ-ㅎㅏ-ㅣ가-힣]/g, ' ')
-                        .split(/\s+/)
-                        .filter(word => word.length >= 2);
-                    return [...new Set(words)];
-                }
-                const searchKeywords = extractSearchKeywords(decryptedTitle, decryptedContent);
-
-                // 3. 마스터 키로 재암호화 (내용만)
-                const contentEncrypted = await window.cryptoManager.encryptWithMasterKey(decryptedContent);
-                const searchIndexEncrypted = await window.cryptoManager.encryptWithMasterKey(JSON.stringify(searchKeywords));
-
-                // 4. 서버에 저장 (CSRF 토큰 포함)
-                const res = await secureFetch(`/api/pages/${encodeURIComponent(page.id)}`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        title: decryptedTitle,  // 제목은 평문으로
-                        content: '',  // 내용은 빈 문자열 (암호화됨)
-                        contentEncrypted,
-                        searchIndexEncrypted,
-                        isEncrypted: true
-                    })
-                });
-
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}`);
-                }
-
-                successCount++;
-                console.log(`페이지 ${page.id} 마이그레이션 완료`);
-
-            } catch (pageError) {
-                console.error(`페이지 ${page.id} 마이그레이션 실패:`, pageError);
-                // 개별 페이지 실패는 계속 진행
-            }
-        }
-
-        // 완료
-        if (errorEl) {
-            errorEl.textContent = '';
-        }
-
-        alert(`${successCount}개의 페이지가 성공적으로 변환되었습니다.`);
-        closeMigrationModal();
-
-        // 페이지 목록 새로고침
-        await fetchPageList();
-        renderPageList();
-
-    } catch (error) {
-        console.error('마이그레이션 오류:', error);
-        if (errorEl) {
-            errorEl.textContent = '마이그레이션 중 오류가 발생했습니다. 비밀번호를 확인해 주세요.';
-        }
-    } finally {
-        if (submitBtn) {
-            submitBtn.disabled = false;
-        }
-        if (progressEl) {
-            progressEl.style.display = 'none';
-        }
-    }
-}
-
-// ==================== Collection Encryption ====================
-/**
- * 컬렉션 암호화 처리
- */
-async function handleCollectionEncryption(collectionId) {
-    const collection = appState.collections.find(c => c.id === collectionId);
-
-    if (!collection || !collection.isOwner) {
-        alert('컬렉션 소유자만 암호화를 설정할 수 있습니다.');
-        return;
-    }
-
-    if (!collection.isShared) {
-        alert('공유된 컬렉션만 암호화할 수 있습니다.');
-        return;
-    }
-
-    if (collection.isEncrypted) {
-        alert('이미 암호화된 컬렉션입니다.');
-        return;
-    }
-
-    if (!window.cryptoManager.isMasterKeyInitialized()) {
-        alert('마스터 키가 초기화되지 않았습니다. 다시 로그인해 주세요.');
-        return;
-    }
-
-    const confirmed = confirm(
-        `"${collection.name}" 컬렉션을 암호화하시겠습니까?\n\n` +
-        '암호화 후에는:\n' +
-        '- 이 컬렉션의 모든 페이지가 암호화됩니다.\n' +
-        '- 공유받은 사용자도 암호화된 페이지에 접근할 수 있습니다.\n' +
-        '- 암호화를 해제할 수 없습니다.'
-    );
-
-    if (!confirmed) return;
-
-    try {
-        // 1. 컬렉션 키 생성
-        const collectionKey = await window.cryptoManager.generateCollectionKey();
-
-        // 2. 컬렉션 키를 소유자의 마스터 키로 암호화
-        const encryptedKey = await window.cryptoManager.encryptCollectionKey(collectionKey);
-
-        // 3. 공유된 사용자 목록 가져오기 (TODO: 각 사용자의 공개키로 암호화 필요)
-        // 현재는 소유자만 컬렉션 키를 가지고 있고,
-        // 공유 사용자는 별도의 메커니즘으로 키를 받아야 함
-        const sharedUserKeys = []; // 향후 구현 예정
-
-        // 4. 서버에 암호화 설정 전송 (CSRF 토큰 포함)
-        const res = await secureFetch(`/api/collections/${encodeURIComponent(collectionId)}/encrypt`, {
-            method: 'POST',
+        const res = await secureFetch(`/api/collections/${encodeURIComponent(currentSettingsCollectionId)}`, {
+            method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                encryptedKey,
-                sharedUserKeys
+                defaultEncryption,
+                enforceEncryption
             })
         });
 
         if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
+            throw new Error('컬렉션 설정 저장 실패');
         }
 
-        // 5. 로컬 상태 업데이트
-        collection.isEncrypted = true;
+        // 로컬 상태 업데이트
+        const collection = appState.collections.find(c => c.id === currentSettingsCollectionId);
+        if (collection) {
+            collection.defaultEncryption = defaultEncryption;
+            collection.enforceEncryption = enforceEncryption;
+        }
 
-        // 6. 컬렉션 목록 다시 로드
-        await fetchCollections();
-        renderPageList();
-
-        alert('컬렉션이 암호화되었습니다.');
+        closeCollectionSettingsModal();
+        alert('컬렉션 설정이 저장되었습니다.');
 
     } catch (error) {
-        console.error('컬렉션 암호화 오류:', error);
-        alert('컬렉션 암호화에 실패했습니다: ' + error.message);
+        console.error('컬렉션 설정 저장 오류:', error);
+        if (errorEl) {
+            errorEl.textContent = error.message || '설정 저장에 실패했습니다.';
+        }
+    } finally {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '저장';
+        }
+    }
+}
+
+/**
+ * 컬렉션 설정 모달 바인딩
+ */
+function bindCollectionSettingsModal() {
+    const form = document.getElementById('collection-settings-form');
+    if (form) {
+        form.addEventListener('submit', saveCollectionSettings);
+    }
+
+    const closeBtn = document.getElementById('close-collection-settings-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', closeCollectionSettingsModal);
+    }
+
+    const cancelBtn = document.getElementById('cancel-collection-settings-btn');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', closeCollectionSettingsModal);
+    }
+
+    const modal = document.getElementById('collection-settings-modal');
+    if (modal) {
+        const overlay = modal.querySelector('.modal-overlay');
+        if (overlay) {
+            overlay.addEventListener('click', closeCollectionSettingsModal);
+        }
     }
 }
 
@@ -1371,23 +1115,8 @@ async function performSearch(query) {
         let shouldInclude = false;
 
         if (page.isEncrypted) {
-            // 암호화된 페이지: 검색 인덱스 복호화
-            if (page.searchIndexEncrypted && window.cryptoManager.isMasterKeyInitialized()) {
-                try {
-                    const indexJson = await window.cryptoManager.decryptWithMasterKey(page.searchIndexEncrypted);
-                    const keywords = JSON.parse(indexJson);
-
-                    // 키워드에 검색어가 포함되어 있는지 확인
-                    shouldInclude = keywords.some(kw => kw.includes(queryLower));
-
-                    // 제목은 이미 fetchPageList()에서 복호화됨
-                    if (shouldInclude) {
-                        titleToSearch = page.title || '제목 없음';
-                    }
-                } catch (error) {
-                    console.error(`페이지 ${page.id} 검색 인덱스 복호화 실패:`, error);
-                }
-            }
+            // 암호화된 페이지는 검색에서 제외 (보안상 이유)
+            shouldInclude = false;
         } else {
             // 평문 페이지: 제목과 내용에서 직접 검색
             titleToSearch = page.title || '';

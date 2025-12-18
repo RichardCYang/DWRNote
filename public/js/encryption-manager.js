@@ -3,6 +3,8 @@
  */
 
 import { secureFetch } from './ui-utils.js';
+import { loadPage, renderPageList, fetchPageList } from './pages-manager.js';
+import { stopPageSync } from './sync-manager.js';
 
 // 전역 상태
 let state = {
@@ -99,10 +101,10 @@ export async function handleEncryption(event) {
         const page = await res.json();
 
         // 2. 암호화 키 초기화 (새 salt 생성)
-        await cryptoManager.initializeKey(password);
+        const saltBase64 = await cryptoManager.initializeKey(password);
 
-        // 3. 콘텐츠 암호화 (salt 포함)
-        const encryptedContent = await cryptoManager.encrypt(page.content);
+        // 3. 콘텐츠 암호화
+        const encryptedData = await cryptoManager.encrypt(page.content);
 
         // 4. 암호화된 콘텐츠 저장
         const updateRes = await secureFetch(`/api/pages/${encodeURIComponent(state.currentEncryptingPageId)}`, {
@@ -112,7 +114,9 @@ export async function handleEncryption(event) {
             },
             body: JSON.stringify({
                 title: page.title,
-                content: encryptedContent,
+                content: '',
+                encryptionSalt: saltBase64,
+                encryptedContent: encryptedData,
                 isEncrypted: true
             })
         });
@@ -129,9 +133,7 @@ export async function handleEncryption(event) {
             state.currentPageIsEncrypted = true;
         }
 
-        if (state.fetchPageList) {
-            await state.fetchPageList();
-        }
+        await fetchPageList();
 
         if (state.currentPageId === state.currentEncryptingPageId) {
             const titleInput = document.querySelector("#page-title-input");
@@ -211,7 +213,7 @@ export function closeDecryptionModal() {
 }
 
 /**
- * 페이지 복호화 처리
+ * 페이지 임시 복호화 처리 (메모리에서만 복호화, DB는 암호화 상태 유지)
  */
 export async function handleDecryption(event) {
     event.preventDefault();
@@ -237,13 +239,131 @@ export async function handleDecryption(event) {
     }
 
     try {
-        if (window.decryptAndLoadPage) {
-            await window.decryptAndLoadPage(state.currentDecryptingPage, password);
+        const page = state.currentDecryptingPage;
+
+        // 0. 이전 페이지의 실시간 동기화 중지 (중요!)
+        stopPageSync();
+
+        // 1. 페이지 데이터 가져오기 (encryptionSalt, encryptedContent)
+        const res = await fetch(`/api/pages/${encodeURIComponent(page.id)}`);
+        if (!res.ok) {
+            throw new Error("페이지를 불러올 수 없습니다.");
         }
+
+        const pageData = await res.json();
+
+        if (!pageData.encryptionSalt || !pageData.encryptedContent) {
+            throw new Error("암호화 데이터가 없습니다.");
+        }
+
+        // 2. 비밀번호로 키 생성 (기존 salt 사용)
+        await cryptoManager.initializeKey(password, pageData.encryptionSalt);
+
+        // 3. 콘텐츠 복호화 (메모리에서만)
+        const decryptedContent = await cryptoManager.decrypt(pageData.encryptedContent);
+
         closeDecryptionModal();
+
+        // 4. 에디터에 복호화된 콘텐츠 표시 (DB는 수정 안 함)
+        state.currentPageId = page.id;
+        state.currentPageIsEncrypted = true; // 여전히 암호화된 상태로 마킹 (수정 방지)
+
+        const titleInput = document.querySelector("#page-title-input");
+        if (titleInput) {
+            titleInput.value = pageData.title;
+            titleInput.setAttribute("readonly", ""); // 암호화된 페이지는 수정 불가
+        }
+
+        if (state.editor) {
+            state.editor.commands.setContent(decryptedContent, { emitUpdate: false });
+            state.editor.setEditable(false); // 암호화된 페이지는 편집 불가
+        }
+
+        // 읽기 모드로 전환
+        state.isWriteMode = false;
+        const modeToggleBtn = document.querySelector("#mode-toggle-btn");
+        const toolbar = document.querySelector(".editor-toolbar");
+        if (toolbar) {
+            toolbar.classList.remove("visible");
+        }
+        if (modeToggleBtn) {
+            modeToggleBtn.classList.remove("write-mode");
+            const iconEl = modeToggleBtn.querySelector("i");
+            const textEl = modeToggleBtn.querySelector("span");
+            if (iconEl) iconEl.className = "fa-solid fa-pencil";
+            if (textEl) textEl.textContent = "쓰기모드";
+        }
+
+        // 페이지 목록 갱신 (선택 표시)
+        renderPageList();
+
+        cryptoManager.clearKey();
     } catch (error) {
-        console.error("복호화 처리 오류:", error);
+        console.error("임시 복호화 오류:", error);
         errorEl.textContent = "비밀번호가 올바르지 않거나 복호화에 실패했습니다.";
+        cryptoManager.clearKey();
+    }
+}
+
+/**
+ * 페이지 영구 복호화 처리 (DB를 평문으로 변경)
+ */
+export async function handlePermanentDecryption(pageId) {
+    const password = prompt('복호화 비밀번호를 입력하세요:');
+    if (!password) {
+        return;
+    }
+
+    try {
+        // 1. 페이지 데이터 가져오기
+        const res = await fetch(`/api/pages/${encodeURIComponent(pageId)}`);
+        if (!res.ok) {
+            throw new Error("페이지를 불러올 수 없습니다.");
+        }
+
+        const pageData = await res.json();
+
+        if (!pageData.encryptionSalt || !pageData.encryptedContent) {
+            throw new Error("암호화 데이터가 없습니다.");
+        }
+
+        // 2. 비밀번호로 키 생성
+        await cryptoManager.initializeKey(password, pageData.encryptionSalt);
+
+        // 3. 콘텐츠 복호화
+        const decryptedContent = await cryptoManager.decrypt(pageData.encryptedContent);
+
+        // 4. 평문으로 DB 업데이트 (영구 복호화)
+        const updateRes = await secureFetch(`/api/pages/${encodeURIComponent(pageId)}`, {
+            method: "PUT",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                title: pageData.title,
+                content: decryptedContent,
+                isEncrypted: false,
+                encryptionSalt: null,
+                encryptedContent: null
+            })
+        });
+
+        if (!updateRes.ok) {
+            throw new Error("영구 복호화 실패.");
+        }
+
+        alert("페이지가 영구적으로 복호화되었습니다!");
+
+        // 5. 페이지 목록 갱신 및 로드
+        await fetchPageList();
+
+        // 6. 복호화된 페이지 로드
+        await loadPage(pageId);
+
+        cryptoManager.clearKey();
+    } catch (error) {
+        console.error("영구 복호화 오류:", error);
+        alert("비밀번호가 올바르지 않거나 복호화에 실패했습니다: " + error.message);
         cryptoManager.clearKey();
     }
 }

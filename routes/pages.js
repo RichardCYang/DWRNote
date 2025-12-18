@@ -179,7 +179,7 @@ module.exports = (dependencies) => {
 
         try {
             const [rows] = await pool.execute(
-                `SELECT p.id, p.title, p.content, p.title_encrypted, p.content_encrypted, p.search_index_encrypted,
+                `SELECT p.id, p.title, p.content, p.encryption_salt, p.encrypted_content,
                         p.created_at, p.updated_at, p.parent_id, p.sort_order, p.collection_id,
                         p.is_encrypted, p.share_allowed, p.user_id, p.icon, p.cover_image, p.cover_position
                  FROM pages p
@@ -200,9 +200,8 @@ module.exports = (dependencies) => {
                 id: row.id,
                 title: row.title || "제목 없음",
                 content: row.content || "<p></p>",
-                titleEncrypted: row.title_encrypted || null,  // E2EE 시스템 재설계
-                contentEncrypted: row.content_encrypted || null,  // E2EE 시스템 재설계
-                searchIndexEncrypted: row.search_index_encrypted || null,  // E2EE 시스템 재설계
+                encryptionSalt: row.encryption_salt || null,
+                encryptedContent: row.encrypted_content || null,
                 createdAt: toIsoString(row.created_at),
                 updatedAt: toIsoString(row.updated_at),
                 parentId: row.parent_id,
@@ -325,25 +324,24 @@ module.exports = (dependencies) => {
         const id = req.params.id;
         const userId = req.user.id;
 
-        // 평문 필드 (공유 컬렉션용)
+        // 평문 필드
         const titleFromBody = typeof req.body.title === "string" ? sanitizeInput(req.body.title.trim()) : null;
         const contentFromBody = typeof req.body.content === "string" ? sanitizeHtmlContent(req.body.content) : null;
         const isEncryptedFromBody = typeof req.body.isEncrypted === "boolean" ? req.body.isEncrypted : null;
         const iconFromBody = typeof req.body.icon === "string" ? req.body.icon.trim() : undefined;
 
-        // 암호화 필드 (개인 페이지용) - E2EE 시스템 재설계
-        const titleEncryptedFromBody = typeof req.body.titleEncrypted === "string" ? req.body.titleEncrypted : null;
-        const contentEncryptedFromBody = typeof req.body.contentEncrypted === "string" ? req.body.contentEncrypted : null;
-        const searchIndexEncryptedFromBody = typeof req.body.searchIndexEncrypted === "string" ? req.body.searchIndexEncrypted : null;
+        // 암호화 필드 (선택적 암호화)
+        const encryptionSaltFromBody = typeof req.body.encryptionSalt === "string" ? req.body.encryptionSalt : null;
+        const encryptedContentFromBody = typeof req.body.encryptedContent === "string" ? req.body.encryptedContent : null;
 
         if (!titleFromBody && !contentFromBody && isEncryptedFromBody === null && iconFromBody === undefined &&
-            !titleEncryptedFromBody && !contentEncryptedFromBody && !searchIndexEncryptedFromBody) {
+            !encryptionSaltFromBody && !encryptedContentFromBody) {
             return res.status(400).json({ error: "수정할 데이터 없음." });
         }
 
         try {
             const [rows] = await pool.execute(
-                `SELECT id, title, content, title_encrypted, content_encrypted, search_index_encrypted,
+                `SELECT id, title, content, encryption_salt, encrypted_content,
                         created_at, updated_at, parent_id, sort_order, collection_id, is_encrypted, user_id, icon
                  FROM pages
                  WHERE id = ?`,
@@ -365,11 +363,11 @@ module.exports = (dependencies) => {
             // 암호화 여부 결정
             const newIsEncrypted = isEncryptedFromBody !== null ? (isEncryptedFromBody ? 1 : 0) : existing.is_encrypted;
 
-            // E2EE: 제목은 평문 유지 (검색/목록 표시용), 내용만 암호화
-            let newTitle, newContent;
             // 제목은 항상 평문으로 저장
-            newTitle = titleFromBody && titleFromBody !== "" ? titleFromBody : existing.title;
+            const newTitle = titleFromBody && titleFromBody !== "" ? titleFromBody : existing.title;
 
+            // 내용 처리
+            let newContent;
             if (newIsEncrypted === 1) {
                 // 암호화된 페이지: content는 빈 문자열 (암호화됨)
                 newContent = '';
@@ -380,10 +378,9 @@ module.exports = (dependencies) => {
 
             const newIcon = iconFromBody !== undefined ? (iconFromBody !== "" ? iconFromBody : null) : existing.icon;
 
-            // 암호화 필드 업데이트 - E2EE 시스템 재설계
-            const newTitleEncrypted = titleEncryptedFromBody !== null ? titleEncryptedFromBody : existing.title_encrypted;
-            const newContentEncrypted = contentEncryptedFromBody !== null ? contentEncryptedFromBody : existing.content_encrypted;
-            const newSearchIndexEncrypted = searchIndexEncryptedFromBody !== null ? searchIndexEncryptedFromBody : existing.search_index_encrypted;
+            // 암호화 필드 업데이트
+            const newEncryptionSalt = encryptionSaltFromBody !== null ? encryptionSaltFromBody : existing.encryption_salt;
+            const newEncryptedContent = encryptedContentFromBody !== null ? encryptedContentFromBody : existing.encrypted_content;
 
             const now = new Date();
             const nowStr = formatDateForDb(now);
@@ -393,19 +390,19 @@ module.exports = (dependencies) => {
             if (isBecomingEncrypted) {
                 await pool.execute(
                     `UPDATE pages
-                     SET title = ?, content = ?, title_encrypted = ?, content_encrypted = ?, search_index_encrypted = ?,
+                     SET title = ?, content = ?, encryption_salt = ?, encrypted_content = ?,
                          is_encrypted = ?, icon = ?, user_id = ?, updated_at = ?
                      WHERE id = ?`,
-                    [newTitle, newContent, newTitleEncrypted, newContentEncrypted, newSearchIndexEncrypted,
+                    [newTitle, newContent, newEncryptionSalt, newEncryptedContent,
                      newIsEncrypted, newIcon, userId, nowStr, id]
                 );
             } else {
                 await pool.execute(
                     `UPDATE pages
-                     SET title = ?, content = ?, title_encrypted = ?, content_encrypted = ?, search_index_encrypted = ?,
+                     SET title = ?, content = ?, encryption_salt = ?, encrypted_content = ?,
                          is_encrypted = ?, icon = ?, updated_at = ?
                      WHERE id = ?`,
-                    [newTitle, newContent, newTitleEncrypted, newContentEncrypted, newSearchIndexEncrypted,
+                    [newTitle, newContent, newEncryptionSalt, newEncryptedContent,
                      newIsEncrypted, newIcon, nowStr, id]
                 );
             }
@@ -414,9 +411,8 @@ module.exports = (dependencies) => {
                 id,
                 title: newTitle,
                 content: newContent,
-                titleEncrypted: newTitleEncrypted,  // E2EE 시스템 재설계
-                contentEncrypted: newContentEncrypted,  // E2EE 시스템 재설계
-                searchIndexEncrypted: newSearchIndexEncrypted,  // E2EE 시스템 재설계
+                encryptionSalt: newEncryptionSalt,
+                encryptedContent: newEncryptedContent,
                 parentId: existing.parent_id,
                 sortOrder: existing.sort_order,
                 collectionId: existing.collection_id,

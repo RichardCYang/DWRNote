@@ -397,13 +397,10 @@ export async function loadPage(id) {
             if (isSharedCollection && collection.isEncrypted) {
                 // 암호화된 공유 컬렉션: 컬렉션 키로 복호화
                 const collectionKey = await getCollectionKey(collection.id);
-                content = await cryptoManager.decryptWithKey(page.contentEncrypted, collectionKey);
+                content = await cryptoManager.decryptWithKey(page.encryptedContent, collectionKey);
             } else {
-                // 개인 컬렉션: 마스터 키로 복호화
-                if (!cryptoManager.isMasterKeyInitialized()) {
-                    throw new Error('마스터 키가 초기화되지 않았습니다. 다시 로그인해 주세요.');
-                }
-                content = await cryptoManager.decryptWithMasterKey(page.contentEncrypted);
+                // 개인 컬렉션 암호화 페이지: 복호화 필요
+                throw new Error('암호화된 페이지입니다. 먼저 복호화하세요.');
             }
         } else {
             // 평문 페이지
@@ -504,7 +501,7 @@ export async function saveCurrentPage() {
                 requestBody = {
                     title: title,  // 제목은 평문으로
                     content: '',  // 내용은 빈 문자열 (암호화됨)
-                    contentEncrypted: await cryptoManager.encryptWithKey(content, collectionKey),
+                    encryptedContent: await cryptoManager.encryptWithKey(content, collectionKey),
                     isEncrypted: true
                 };
             } else {
@@ -516,20 +513,18 @@ export async function saveCurrentPage() {
                 };
             }
         } else {
-            // 개인 컬렉션: 마스터 키로 자동 암호화 (투명한 E2EE)
-            if (!cryptoManager.isMasterKeyInitialized()) {
-                alert("마스터 키가 초기화되지 않았습니다. 페이지를 새로고침하고 다시 로그인해주세요.");
+            // 개인 컬렉션: 기본적으로 평문 저장 (선택적 암호화)
+            // 암호화된 페이지인 경우 수정 불가 (먼저 복호화 필요)
+            const currentPage = state.pages.find(p => p.id === state.currentPageId);
+            if (currentPage && currentPage.isEncrypted) {
+                alert('암호화된 페이지는 수정할 수 없습니다. 먼저 복호화하세요.');
                 return false;
             }
 
-            const searchKeywords = extractSearchKeywords(title, content);
             requestBody = {
-                // E2EE: 제목은 평문, 내용만 암호화
-                title: title,  // 제목은 평문으로 저장 (검색/목록 표시용)
-                content: '',  // 내용은 빈 문자열 (암호화됨)
-                contentEncrypted: await cryptoManager.encryptWithMasterKey(content),
-                searchIndexEncrypted: await cryptoManager.encryptWithMasterKey(JSON.stringify(searchKeywords)),
-                isEncrypted: true
+                title,
+                content,
+                isEncrypted: false
             };
         }
 
@@ -577,27 +572,13 @@ export async function saveCurrentPage() {
 }
 
 /**
- * 공유 컬렉션 키 조회 (E2EE 시스템 재설계)
+ * 공유 컬렉션 키 조회 (향후 구현 예정)
+ * TODO: 마스터 키 없이 컬렉션 암호화 구현
  */
-async function getCollectionKey(collectionId, retries = 3) {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-            const res = await secureFetch(`/api/collections/${encodeURIComponent(collectionId)}/encryption-key`);
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || "컬렉션 키 조회 실패");
-            }
-            const data = await res.json();
-            return await cryptoManager.decryptCollectionKey(data.encryptedKey);
-        } catch (error) {
-            console.error(`컬렉션 키 조회 오류 (시도 ${attempt}/${retries}):`, error);
-            if (attempt === retries) {
-                throw error;
-            }
-            // 재시도 전 짧은 대기 (500ms)
-            await new Promise(resolve => setTimeout(resolve, 500));
-        }
-    }
+async function getCollectionKey(collectionId) {
+    // 현재 마스터 키 시스템 제거로 인해 비활성화
+    // 공유 컬렉션 암호화는 컬렉션별 비밀번호 방식으로 재구현 필요
+    throw new Error('공유 컬렉션 암호화는 현재 지원되지 않습니다.');
 }
 
 /**

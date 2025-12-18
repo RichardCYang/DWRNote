@@ -501,47 +501,16 @@ async function initDb() {
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             username VARCHAR(64) NOT NULL UNIQUE,
             password_hash VARCHAR(255) NOT NULL,
-            encryption_salt VARCHAR(255) NULL,
             created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL
+            updated_at DATETIME NOT NULL,
+            totp_secret VARCHAR(64) NULL,
+            totp_enabled TINYINT(1) NOT NULL DEFAULT 0,
+            passkey_enabled TINYINT(1) NOT NULL DEFAULT 0,
+            block_duplicate_login TINYINT(1) NOT NULL DEFAULT 0
         )
     `);
 
-    // 기존 users 테이블에 encryption_salt 컬럼 추가 (없을 경우에만)
-    try {
-        await pool.execute(`
-            ALTER TABLE users ADD COLUMN encryption_salt VARCHAR(255) NULL
-        `);
-        console.log("users 테이블에 encryption_salt 컬럼 추가 완료");
-    } catch (error) {
-        // 이미 컬럼이 존재하는 경우 무시
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("encryption_salt 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    // users 테이블에 TOTP 관련 컬럼 추가 (2FA)
-    try {
-        await pool.execute(`
-            ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64) NULL
-        `);
-        console.log("users 테이블에 totp_secret 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("totp_secret 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    try {
-        await pool.execute(`
-            ALTER TABLE users ADD COLUMN totp_enabled TINYINT(1) NOT NULL DEFAULT 0
-        `);
-        console.log("users 테이블에 totp_enabled 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("totp_enabled 컬럼 추가 중 경고:", error.message);
-        }
-    }
+    // (TOTP 컬럼들은 이제 CREATE TABLE에 포함됨)
 
     // users 가 하나도 없으면 기본 관리자 계정 생성
     const [userRows] = await pool.execute("SELECT COUNT(*) AS cnt FROM users");
@@ -577,6 +546,9 @@ async function initDb() {
             sort_order  INT          NOT NULL DEFAULT 0,
             created_at  DATETIME     NOT NULL,
             updated_at  DATETIME     NOT NULL,
+            is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
+            default_encryption TINYINT(1) NOT NULL DEFAULT 0,
+            enforce_encryption TINYINT(1) NOT NULL DEFAULT 0,
             CONSTRAINT fk_collections_user
                 FOREIGN KEY (user_id)
                 REFERENCES users(id)
@@ -595,6 +567,13 @@ async function initDb() {
             created_at  DATETIME     NOT NULL,
             updated_at  DATETIME     NOT NULL,
             parent_id   VARCHAR(64)  NULL,
+            is_encrypted TINYINT(1) NOT NULL DEFAULT 0,
+            encryption_salt VARCHAR(255) NULL,
+            encrypted_content MEDIUMTEXT NULL,
+            share_allowed TINYINT(1) NOT NULL DEFAULT 0,
+            icon VARCHAR(100) NULL,
+            cover_image VARCHAR(255) NULL,
+            cover_position INT NOT NULL DEFAULT 50,
             CONSTRAINT fk_pages_user
                 FOREIGN KEY (user_id)
                 REFERENCES users(id)
@@ -628,65 +607,7 @@ async function initDb() {
         }
     }
 
-    // 보안 개선: is_encrypted 플래그 추가 (기본값 0 - 암호화 안 됨)
-    try {
-        await pool.execute(`
-            ALTER TABLE pages ADD COLUMN is_encrypted TINYINT(1) NOT NULL DEFAULT 0
-        `);
-        console.log("pages 테이블에 is_encrypted 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("pages.is_encrypted 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    // 공유 컬렉션의 암호화 페이지 공유 허용 플래그 추가 (기본값 0 - 공유 불가)
-    try {
-        await pool.execute(`
-            ALTER TABLE pages ADD COLUMN share_allowed TINYINT(1) NOT NULL DEFAULT 0
-        `);
-        console.log("pages 테이블에 share_allowed 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("pages.share_allowed 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    // 페이지 아이콘 지정 기능 추가 (기본값 NULL - 아이콘 없음)
-    try {
-        await pool.execute(`
-            ALTER TABLE pages ADD COLUMN icon VARCHAR(100) NULL
-        `);
-        console.log("pages 테이블에 icon 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("pages.icon 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    // 페이지 커버 이미지 추가 (기본값 NULL - 커버 없음)
-    try {
-        await pool.execute(`
-            ALTER TABLE pages ADD COLUMN cover_image VARCHAR(255) NULL
-        `);
-        console.log("pages 테이블에 cover_image 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("pages.cover_image 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    // 페이지 커버 이미지 위치 추가 (기본값 50 - 중앙)
-    try {
-        await pool.execute(`
-            ALTER TABLE pages ADD COLUMN cover_position INT NOT NULL DEFAULT 50
-        `);
-        console.log("pages 테이블에 cover_position 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("pages.cover_position 컬럼 추가 중 경고:", error.message);
-        }
-    }
+    // (페이지 관련 컬럼들은 이제 CREATE TABLE에 포함됨)
 
     // collection_shares 테이블 생성 (사용자 간 직접 공유)
     await pool.execute(`
@@ -760,29 +681,7 @@ async function initDb() {
         )
     `);
 
-    // users 테이블에 passkey_enabled 컬럼 추가 (패스키 2FA)
-    try {
-        await pool.execute(`
-            ALTER TABLE users ADD COLUMN passkey_enabled TINYINT(1) NOT NULL DEFAULT 0
-        `);
-        console.log("users 테이블에 passkey_enabled 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("passkey_enabled 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    // users 테이블에 block_duplicate_login 컬럼 추가 (중복 로그인 차단)
-    try {
-        await pool.execute(`
-            ALTER TABLE users ADD COLUMN block_duplicate_login TINYINT(1) NOT NULL DEFAULT 0
-        `);
-        console.log("users 테이블에 block_duplicate_login 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("block_duplicate_login 컬럼 추가 중 경고:", error.message);
-        }
-    }
+    // (passkey_enabled, block_duplicate_login은 이제 CREATE TABLE에 포함됨)
 
     // passkeys 테이블 생성 (WebAuthn 크레덴셜 저장)
     await pool.execute(`
@@ -822,104 +721,10 @@ async function initDb() {
     `);
 
     // ============================================================
-    // E2EE 시스템 재설계: 마스터 키 기반 자동 암호화
+    // E2EE 시스템 재설계: 선택적 암호화 (마스터 키 시스템 제거)
     // ============================================================
-
-    // users 테이블에 master_key_salt 컬럼 추가 (마스터 키 유도용)
-    try {
-        await pool.execute(`
-            ALTER TABLE users ADD COLUMN master_key_salt VARCHAR(255) NULL
-        `);
-        console.log("users 테이블에 master_key_salt 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("master_key_salt 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    // pages 테이블에 암호화 필드 추가
-    try {
-        await pool.execute(`
-            ALTER TABLE pages ADD COLUMN content_encrypted MEDIUMTEXT NULL
-        `);
-        console.log("pages 테이블에 content_encrypted 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("content_encrypted 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    try {
-        await pool.execute(`
-            ALTER TABLE pages ADD COLUMN title_encrypted VARCHAR(512) NULL
-        `);
-        console.log("pages 테이블에 title_encrypted 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("title_encrypted 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    try {
-        await pool.execute(`
-            ALTER TABLE pages ADD COLUMN search_index_encrypted TEXT NULL
-        `);
-        console.log("pages 테이블에 search_index_encrypted 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("search_index_encrypted 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    // collections 테이블에 암호화 관련 컬럼 추가
-    try {
-        await pool.execute(`
-            ALTER TABLE collections ADD COLUMN is_encrypted TINYINT(1) NOT NULL DEFAULT 0
-        `);
-        console.log("collections 테이블에 is_encrypted 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("collections.is_encrypted 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    try {
-        await pool.execute(`
-            ALTER TABLE collections ADD COLUMN encryption_key_encrypted TEXT NULL
-        `);
-        console.log("collections 테이블에 encryption_key_encrypted 컬럼 추가 완료");
-    } catch (error) {
-        if (error.code !== 'ER_DUP_FIELDNAME') {
-            console.warn("collections.encryption_key_encrypted 컬럼 추가 중 경고:", error.message);
-        }
-    }
-
-    // collection_encryption_keys 테이블 생성 (공유 컬렉션 키 관리)
-    await pool.execute(`
-        CREATE TABLE IF NOT EXISTS collection_encryption_keys (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            collection_id VARCHAR(64) NOT NULL,
-            user_id INT NOT NULL,
-            encrypted_key TEXT NOT NULL,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL,
-            CONSTRAINT fk_collection_encryption_keys_collection
-                FOREIGN KEY (collection_id)
-                REFERENCES collections(id)
-                ON DELETE CASCADE,
-            CONSTRAINT fk_collection_encryption_keys_user
-                FOREIGN KEY (user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-            CONSTRAINT uc_collection_encryption_keys_unique
-                UNIQUE (collection_id, user_id),
-            INDEX idx_collection_user (collection_id, user_id)
-        )
-    `);
-    console.log("collection_encryption_keys 테이블 생성 완료");
-
-    // ============================================================
-    // E2EE 시스템 재설계 완료
+    // - 모든 E2EE 관련 컬럼들은 CREATE TABLE에 포함됨
+    // - 마스터 키 시스템 제거로 더 이상 필요 없음
     // ============================================================
 
     // 컬렉션이 없는 기존 사용자 데이터 마이그레이션

@@ -51,7 +51,7 @@ module.exports = (dependencies) => {
         try {
             const [rows] = await pool.execute(
                 `
-                SELECT id, username, password_hash, encryption_salt, totp_enabled, passkey_enabled, block_duplicate_login
+                SELECT id, username, password_hash, totp_enabled, passkey_enabled, block_duplicate_login
                 FROM users
                 WHERE username = ?
                 `,
@@ -349,7 +349,7 @@ module.exports = (dependencies) => {
     router.get("/me", authMiddleware, async (req, res) => {
         try {
             const [rows] = await pool.execute(
-                `SELECT id, username, encryption_salt, master_key_salt FROM users WHERE id = ?`,
+                `SELECT id, username FROM users WHERE id = ?`,
                 [req.user.id]
             );
 
@@ -360,9 +360,7 @@ module.exports = (dependencies) => {
             const user = rows[0];
             res.json({
                 id: user.id,
-                username: user.username,
-                encryptionSalt: user.encryption_salt,
-                masterKeySalt: user.master_key_salt // E2EE 시스템 재설계
+                username: user.username
             });
         } catch (error) {
             logError("GET /api/auth/me", error);
@@ -370,93 +368,8 @@ module.exports = (dependencies) => {
         }
     });
 
-    /**
-     * 암호화 Salt 업데이트
-     * PUT /api/auth/encryption-salt
-     */
-    router.put("/encryption-salt", authMiddleware, async (req, res) => {
-        const { encryptionSalt } = req.body;
-
-        if (typeof encryptionSalt !== "string" || !encryptionSalt) {
-            return res.status(400).json({ error: "암호화 Salt가 필요합니다." });
-        }
-
-        try {
-            await pool.execute(
-                `UPDATE users SET encryption_salt = ? WHERE id = ?`,
-                [encryptionSalt, req.user.id]
-            );
-
-            res.json({ ok: true });
-        } catch (error) {
-            logError("PUT /api/auth/encryption-salt", error);
-            res.status(500).json({ error: "암호화 Salt 업데이트 중 오류가 발생했습니다." });
-        }
-    });
-
-    /**
-     * 마스터 키 Salt 설정 (E2EE 시스템 재설계)
-     * PUT /api/auth/master-key-salt
-     */
-    router.put("/master-key-salt", authMiddleware, async (req, res) => {
-        const { masterKeySalt } = req.body;
-
-        if (typeof masterKeySalt !== "string" || !masterKeySalt) {
-            return res.status(400).json({ error: "마스터 키 Salt가 필요합니다." });
-        }
-
-        try {
-            await pool.execute(
-                `UPDATE users SET master_key_salt = ? WHERE id = ?`,
-                [masterKeySalt, req.user.id]
-            );
-
-            res.json({ ok: true });
-        } catch (error) {
-            logError("PUT /api/auth/master-key-salt", error);
-            res.status(500).json({ error: "마스터 키 Salt 업데이트 중 오류가 발생했습니다." });
-        }
-    });
-
-    /**
-     * 비밀번호 재확인 (보안 강화)
-     * POST /api/auth/verify-password
-     */
-    router.post("/verify-password", authMiddleware, async (req, res) => {
-        const { password } = req.body || {};
-
-        if (typeof password !== "string") {
-            return res.status(400).json({ error: "비밀번호를 입력해 주세요." });
-        }
-
-        try {
-            const [rows] = await pool.execute(
-                `SELECT id, username, password_hash, encryption_salt, master_key_salt FROM users WHERE id = ?`,
-                [req.user.id]
-            );
-
-            if (!rows.length) {
-                return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
-            }
-
-            const user = rows[0];
-
-            const ok = await bcrypt.compare(password, user.password_hash);
-            if (!ok) {
-                console.warn("비밀번호 재확인 실패:", req.user.username);
-                return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
-            }
-
-            res.json({
-                ok: true,
-                encryptionSalt: user.encryption_salt,
-                masterKeySalt: user.master_key_salt // E2EE 시스템 재설계
-            });
-        } catch (error) {
-            logError("POST /api/auth/verify-password", error);
-            res.status(500).json({ error: "비밀번호 확인 중 오류가 발생했습니다." });
-        }
-    });
+    // ==================== 마스터 키 시스템 제거됨 ====================
+    // encryption-salt, master-key-salt, verify-password 엔드포인트 제거됨 (선택적 암호화 시스템으로 변경)
 
     /**
      * 보안 설정 조회
