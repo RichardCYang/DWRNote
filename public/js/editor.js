@@ -435,9 +435,30 @@ function openSlashMenu(coords, fromPos, editor) {
     // 메뉴 항목 렌더링
     renderSlashMenuItems();
 
+    // 임시로 메뉴를 보여서 실제 높이를 계산
+    slashMenuEl.classList.remove("hidden");
+    slashMenuEl.style.visibility = "hidden"; // 화면에 나타나지 않게 함
     slashMenuEl.style.left = `${coords.left}px`;
     slashMenuEl.style.top = `${coords.bottom + 4}px`;
-    slashMenuEl.classList.remove("hidden");
+
+    // 다음 프레임에서 높이를 계산하고 위치 조정
+    requestAnimationFrame(() => {
+        const menuHeight = slashMenuEl.offsetHeight;
+        const windowHeight = window.innerHeight;
+        let top = coords.bottom + 4;
+
+        // 메뉴가 화면 아래로 나갈 경우, 커서 위쪽에 표시
+        if (top + menuHeight > windowHeight) {
+            top = coords.top - menuHeight - 4;
+            // 메뉴가 화면 위로 나가지 않도록 조정
+            if (top < 0) {
+                top = coords.bottom + 4;
+            }
+        }
+
+        slashMenuEl.style.top = `${top}px`;
+        slashMenuEl.style.visibility = "visible"; // 계산 후 표시
+    });
 }
 
 /**
@@ -699,6 +720,26 @@ export function initEditor() {
 
             // 슬래시 메뉴 필터링 업데이트
             if (slashState.active) {
+                const selection = editor.state.selection;
+
+                // "/" 문자가 삭제되었거나, 커서가 "/" 이전으로 이동했으면 메뉴 닫기
+                if (slashState.fromPos !== null && selection.from <= slashState.fromPos) {
+                    closeSlashMenu();
+                    return;
+                }
+
+                // fromPos 위치의 문자가 정말 "/"인지 확인
+                try {
+                    const char = editor.state.doc.textBetween(slashState.fromPos, slashState.fromPos + 1);
+                    if (char !== '/') {
+                        closeSlashMenu();
+                        return;
+                    }
+                } catch (e) {
+                    closeSlashMenu();
+                    return;
+                }
+
                 const text = getSlashCommandText(editor);
                 slashState.filterText = text;
                 slashState.filteredItems = filterSlashItems(text);
