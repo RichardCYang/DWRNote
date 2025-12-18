@@ -449,6 +449,83 @@ module.exports = (dependencies) => {
     });
 
     /**
+     * 페이지에서 이미지 URL 추출
+     * @param {Object} page - 페이지 객체 (content, cover_image 포함)
+     * @returns {Array<string>} - 이미지 경로 배열 (예: ["1/abc.jpg", "1/xyz.png"])
+     */
+    function extractImagesFromPage(page) {
+        const images = [];
+
+        // 1. content에서 <img> 태그의 src 추출
+        if (page.content) {
+            const imgRegex = /<img[^>]+src=["']\/imgs\/([^"']+)["']/g;
+            let match;
+            while ((match = imgRegex.exec(page.content)) !== null) {
+                images.push(match[1]); // "userId/filename.jpg"
+            }
+        }
+
+        // 2. cover_image 추가
+        if (page.cover_image) {
+            images.push(page.cover_image); // "userId/filename.jpg"
+        }
+
+        return images;
+    }
+
+    /**
+     * 고립된 이미지 삭제 (다른 페이지에서 참조하지 않는 이미지만)
+     * @param {Array<string>} imageUrls - 이미지 경로 배열
+     * @param {number} userId - 사용자 ID
+     */
+    async function cleanupOrphanedImages(imageUrls, userId) {
+        if (!imageUrls || imageUrls.length === 0) return;
+
+        for (const imageUrl of imageUrls) {
+            try {
+                // 이미지 경로에서 userId와 filename 추출
+                const parts = imageUrl.split('/');
+                if (parts.length !== 2) continue;
+
+                const [imgUserId, filename] = parts;
+
+                // 해당 이미지를 참조하는 다른 페이지가 있는지 확인
+                const [contentRows] = await pool.execute(
+                    `SELECT COUNT(*) as count FROM pages WHERE user_id = ? AND content LIKE ?`,
+                    [userId, `%/imgs/${imageUrl}%`]
+                );
+
+                const [coverRows] = await pool.execute(
+                    `SELECT COUNT(*) as count FROM pages WHERE user_id = ? AND cover_image = ?`,
+                    [userId, imageUrl]
+                );
+
+                const totalReferences = contentRows[0].count + coverRows[0].count;
+
+                // 참조가 없으면 물리적 파일 삭제
+                if (totalReferences === 0) {
+                    // imgs 폴더에서 삭제 시도
+                    const imgPath = path.join(__dirname, '..', 'imgs', imgUserId, filename);
+                    if (fs.existsSync(imgPath)) {
+                        fs.unlinkSync(imgPath);
+                        console.log(`이미지 삭제됨: ${imgPath}`);
+                    }
+
+                    // covers 폴더에서도 삭제 시도 (커버 이미지인 경우)
+                    const coverPath = path.join(__dirname, '..', 'covers', imgUserId, filename);
+                    if (fs.existsSync(coverPath)) {
+                        fs.unlinkSync(coverPath);
+                        console.log(`커버 이미지 삭제됨: ${coverPath}`);
+                    }
+                }
+            } catch (err) {
+                console.error(`이미지 정리 중 오류 (${imageUrl}):`, err);
+                // 개별 이미지 정리 실패는 무시하고 계속 진행
+            }
+        }
+    }
+
+    /**
      * 페이지 삭제 (EDIT 이상 권한 필요)
      * DELETE /api/pages/:id
      */
@@ -457,8 +534,9 @@ module.exports = (dependencies) => {
         const userId = req.user.id;
 
         try {
+            // 페이지 정보 조회 (이미지 정리를 위해 content와 cover_image도 가져옴)
             const [rows] = await pool.execute(
-                `SELECT id, collection_id FROM pages WHERE id = ?`,
+                `SELECT id, collection_id, content, cover_image FROM pages WHERE id = ?`,
                 [id]
             );
 
@@ -474,12 +552,23 @@ module.exports = (dependencies) => {
                 return res.status(403).json({ error: "페이지를 삭제할 권한이 없습니다." });
             }
 
+            // 페이지에서 사용된 이미지 추출
+            const imageUrls = extractImagesFromPage(page);
+
+            // 페이지 삭제
             await pool.execute(
                 `DELETE FROM pages WHERE id = ?`,
                 [id]
             );
 
             console.log("DELETE /api/pages/:id 삭제:", id);
+
+            // 고립된 이미지 정리 (비동기로 실행하여 응답 지연 방지)
+            if (imageUrls.length > 0) {
+                cleanupOrphanedImages(imageUrls, userId).catch(err => {
+                    console.error("이미지 정리 중 오류:", err);
+                });
+            }
 
             res.json({ ok: true, removedId: id });
         } catch (error) {
