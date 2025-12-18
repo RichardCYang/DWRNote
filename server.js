@@ -1653,6 +1653,7 @@ function cleanupWebSocketConnection(ws) {
             sanitizeInput,
             sanitizeHtmlContent,
             generatePageId,
+            generateCollectionId,
             createCollection,
             getCollectionPermission,
             hasEncryptedPages,
@@ -1690,6 +1691,7 @@ function cleanupWebSocketConnection(ws) {
         const sharesRoutes = require('./routes/shares')(routeDependencies);
         const totpRoutes = require('./routes/totp')(routeDependencies);
         const passkeyRoutes = require('./routes/passkey')(routeDependencies);
+        const backupRoutes = require('./routes/backup')(routeDependencies);
 
         // 라우트 등록
         app.use('/', indexRoutes);
@@ -1699,6 +1701,7 @@ function cleanupWebSocketConnection(ws) {
         app.use('/api', sharesRoutes);
         app.use('/api/totp', totpRoutes);
         app.use('/api/passkey', passkeyRoutes);
+        app.use('/api/backup', backupRoutes);
 
         // DuckDNS 설정 확인
         const DUCKDNS_DOMAIN = process.env.DUCKDNS_DOMAIN;

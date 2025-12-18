@@ -141,6 +141,9 @@ export function bindSettingsModal() {
     const closeBtn = document.querySelector("#close-settings-btn");
     const saveBtn = document.querySelector("#save-settings-btn");
     const overlay = document.querySelector(".modal-overlay");
+    const exportBackupBtn = document.querySelector("#export-backup-btn");
+    const importBackupBtn = document.querySelector("#import-backup-btn");
+    const importBackupInput = document.querySelector("#import-backup-input");
 
     if (settingsBtn) {
         settingsBtn.addEventListener("click", () => {
@@ -163,6 +166,32 @@ export function bindSettingsModal() {
     if (overlay) {
         overlay.addEventListener("click", () => {
             closeSettingsModal();
+        });
+    }
+
+    // 백업 내보내기 버튼
+    if (exportBackupBtn) {
+        exportBackupBtn.addEventListener("click", async () => {
+            await exportBackup();
+        });
+    }
+
+    // 백업 불러오기 버튼
+    if (importBackupBtn) {
+        importBackupBtn.addEventListener("click", () => {
+            importBackupInput.click();
+        });
+    }
+
+    // 파일 선택 시 백업 불러오기
+    if (importBackupInput) {
+        importBackupInput.addEventListener("change", async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                await importBackup(file);
+                // 입력 초기화
+                importBackupInput.value = '';
+            }
         });
     }
 }
@@ -202,5 +231,104 @@ export async function fetchAndDisplayCurrentUser() {
         if (userAvatarEl) {
             userAvatarEl.textContent = "?";
         }
+    }
+}
+
+/**
+ * 백업 내보내기
+ */
+async function exportBackup() {
+    try {
+        const { secureFetch } = await import('./ui-utils.js');
+
+        // 내보내기 시작 알림
+        alert('백업 생성 중입니다. 데이터 양에 따라 시간이 걸릴 수 있습니다.');
+
+        const response = await secureFetch('/api/backup/export', {
+            method: 'GET'
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || '백업 내보내기 실패');
+        }
+
+        // Blob으로 파일 다운로드
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+
+        // 파일명: NTEOK_Backup_YYYYMMDD_HHMMSS.zip
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 19).replace(/[-:T]/g, '').replace(/(\d{8})(\d{6})/, '$1_$2');
+        a.download = `NTEOK_Backup_${dateStr}.zip`;
+
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+        console.log('백업 내보내기 완료');
+        alert('백업이 성공적으로 내보내졌습니다.');
+    } catch (error) {
+        console.error('백업 내보내기 실패:', error);
+        alert(`백업 내보내기에 실패했습니다: ${error.message}`);
+    }
+}
+
+/**
+ * 백업 불러오기
+ */
+async function importBackup(file) {
+    if (!file || !file.name.endsWith('.zip')) {
+        alert('ZIP 파일만 선택할 수 있습니다.');
+        return;
+    }
+
+    const confirmed = confirm(
+        '백업을 불러오면 현재 데이터와 병합됩니다.\n' +
+        '계속하시겠습니까?'
+    );
+
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        const { secureFetch } = await import('./ui-utils.js');
+
+        // FormData로 파일 전송
+        const formData = new FormData();
+        formData.append('backup', file);
+
+        alert('백업 불러오기 중입니다. 데이터 양에 따라 시간이 걸릴 수 있습니다.');
+
+        const response = await secureFetch('/api/backup/import', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || '백업 불러오기 실패');
+        }
+
+        const result = await response.json();
+        console.log('백업 불러오기 완료:', result);
+
+        alert(
+            `백업 불러오기가 완료되었습니다!\n\n` +
+            `컬렉션: ${result.collectionsCount}개\n` +
+            `페이지: ${result.pagesCount}개\n` +
+            `이미지: ${result.imagesCount}개\n\n` +
+            `페이지를 새로고침합니다.`
+        );
+
+        // 페이지 새로고침하여 새 데이터 반영
+        window.location.reload();
+    } catch (error) {
+        console.error('백업 불러오기 실패:', error);
+        alert(`백업 불러오기에 실패했습니다: ${error.message}`);
     }
 }
