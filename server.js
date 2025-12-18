@@ -241,9 +241,10 @@ function sanitizeHtmlContent(html) {
             'ul', 'ol', 'li', 'blockquote',
             'a', 'span', 'div',
             'hr',
-            'table', 'thead', 'tbody', 'tr', 'th', 'td'
+            'table', 'thead', 'tbody', 'tr', 'th', 'td',
+            'img', 'figure'
         ],
-        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth'],
+        ALLOWED_ATTR: ['style', 'class', 'href', 'target', 'rel', 'data-type', 'data-latex', 'colspan', 'rowspan', 'colwidth', 'src', 'alt', 'data-src', 'data-alt', 'data-caption', 'data-width'],
         ALLOW_DATA_ATTR: false,
         ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
     });
@@ -1174,6 +1175,7 @@ app.use("/api", generalLimiter);
 
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 app.use('/covers', express.static(path.join(__dirname, 'covers')));
+app.use('/imgs', express.static(path.join(__dirname, 'imgs')));
 
 /**
  * multer 설정 (커버 이미지 업로드)
@@ -1206,6 +1208,35 @@ const coverUpload = multer({
     }
 });
 
+// 에디터 이미지 업로드를 위한 multer 설정
+const editorImageStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const userId = req.user.id;
+        const userImgDir = path.join(__dirname, 'imgs', String(userId));
+        fs.mkdirSync(userImgDir, { recursive: true });
+        cb(null, userImgDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}${path.extname(file.originalname)}`;
+        cb(null, uniqueName);
+    }
+});
+
+const editorImageUpload = multer({
+    storage: editorImageStorage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = /jpeg|jpg|png|gif|webp/;
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const mimetype = allowedTypes.test(file.mimetype);
+        if (extname && mimetype) {
+            cb(null, true);
+        } else {
+            cb(new Error('이미지 파일만 업로드 가능합니다 (jpg, png, gif, webp)'));
+        }
+    }
+});
+
 /**
  * WebSocket 서버 초기화
  */
@@ -1216,8 +1247,6 @@ function initWebSocketServer(server) {
     });
 
     wss.on('connection', async (ws, req) => {
-        console.log('[WS] 새로운 WebSocket 연결');
-
         // 쿠키 파싱
         const cookies = {};
         if (req.headers.cookie) {
@@ -1264,7 +1293,6 @@ function initWebSocketServer(server) {
 
         // 연결 종료 핸들러
         ws.on('close', () => {
-            console.log(`[WS] 연결 종료: userId=${ws.userId}`);
             cleanupWebSocketConnection(ws);
         });
 
@@ -1300,7 +1328,6 @@ function initWebSocketServer(server) {
         clearInterval(heartbeatInterval);
     });
 
-    console.log('[WS] WebSocket 서버 초기화 완료 (경로: /ws)');
     return wss;
 }
 
@@ -1387,8 +1414,6 @@ async function handleSubscribePage(ws, payload) {
 
         // 다른 사용자들에게 입장 알림
         wsBroadcastToPage(pageId, 'user-joined', { userId, username: ws.username, color: userColor }, userId);
-
-        console.log(`[WS] 페이지 구독: pageId=${pageId}, userId=${userId}`);
     } catch (error) {
         console.error('[WS] 페이지 구독 오류:', error);
         ws.send(JSON.stringify({ event: 'error', data: { message: '페이지 구독 실패' } }));
@@ -1445,8 +1470,6 @@ async function handleSubscribeCollection(ws, payload) {
 
         const connection = { ws, userId, permission: permission.permission };
         wsConnections.collections.get(collectionId).add(connection);
-
-        console.log(`[WS] 컬렉션 구독: collectionId=${collectionId}, userId=${userId}`);
     } catch (error) {
         console.error('[WS] 컬렉션 구독 오류:', error);
         ws.send(JSON.stringify({ event: 'error', data: { message: '컬렉션 구독 실패' } }));
@@ -1486,8 +1509,6 @@ function handleSubscribeUser(ws, payload) {
 
     const connection = { ws, sessionId };
     wsConnections.users.get(userId).add(connection);
-
-    console.log(`[WS] 사용자 알림 구독: userId=${userId}`);
 }
 
 /**
@@ -1656,6 +1677,7 @@ function cleanupWebSocketConnection(ws) {
             BCRYPT_SALT_ROUNDS,
             BASE_URL,
             coverUpload,
+            editorImageUpload,
             path,
             fs
         };

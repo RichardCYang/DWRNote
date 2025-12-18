@@ -1264,6 +1264,106 @@ body {
     font-size: 1.1em;
 }
 
+/* ==================== Image with Caption Styles ==================== */
+.image-with-caption-wrapper {
+    margin: 1em 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5em;
+}
+
+.image-container {
+    width: 100%;
+    max-width: 100%;
+    display: flex;
+    justify-content: center;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    background: #f9fafb;
+}
+
+.caption-image {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.image-caption-container {
+    width: 100%;
+    max-width: 100%;
+    text-align: center;
+}
+
+.image-caption-input {
+    width: 100%;
+    padding: 0.5em;
+    font-size: 13px;
+    color: #6b7280;
+    text-align: center;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    transition: all 0.2s ease;
+}
+
+.image-caption-input:not([readonly]):focus {
+    outline: none;
+    border-color: #d1d5db;
+    background: #f9fafb;
+}
+
+.image-caption-input:not([readonly]):hover {
+    background: #f9fafb;
+}
+
+.image-caption-input[readonly] {
+    cursor: default;
+    pointer-events: auto;
+}
+
+.image-caption-input::placeholder {
+    color: #9ca3af;
+}
+
+.image-caption {
+    width: 100%;
+    padding: 0.5em;
+    font-size: 13px;
+    color: #6b7280;
+    text-align: center;
+}
+
+/* Resize handle */
+.image-resize-handle {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 20px;
+    height: 20px;
+    background: #3b82f6;
+    border: 2px solid white;
+    border-radius: 50%;
+    cursor: nwse-resize;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    z-index: 10;
+    transition: all 0.2s ease;
+}
+
+.image-resize-handle:hover {
+    background: #2563eb;
+    transform: scale(1.1);
+}
+
+.image-resize-handle:active {
+    background: #1d4ed8;
+    transform: scale(1.2);
+}
+
 /* ==================== Settings Modal - Responsive Design ==================== */
 
 /* 설정 모달 컨텐츠 */

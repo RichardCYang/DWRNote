@@ -877,6 +877,9 @@ function initToolbarElements() {
 
 // ==================== Initialization ====================
 async function init() {
+    // appState를 전역으로 노출 (에디터 등에서 접근 가능하도록)
+    window.appState = appState;
+
     // 설정 로드
     const loadedSettings = loadSettings();
     appState.userSettings = loadedSettings;

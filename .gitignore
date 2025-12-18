@@ -80,6 +80,10 @@ certs/
 covers/*
 !covers/default/
 
+# 사용자 업로드 에디터 이미지
+imgs/*
+!imgs/.gitkeep
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache

@@ -3,6 +3,9 @@
  * 에디터 초기화, 툴바, 슬래시 명령 등을 관리
  */
 
+// UI Utils import
+import { secureFetch } from './ui-utils.js';
+
 // 문단 정렬(TextAlign) 익스텐션 ESM import
 import { TextAlign } from "https://esm.sh/@tiptap/extension-text-align@2.0.0-beta.209";
 
@@ -25,6 +28,9 @@ import TableCell from "https://esm.sh/@tiptap/extension-table-cell@2.0.0-beta.20
 
 // Math 노드 import
 import { MathBlock, MathInline } from './math-node.js';
+
+// ImageWithCaption 노드 import
+import { ImageWithCaption } from './image-with-caption-node.js';
 
 // 전역 Tiptap 번들에서 Editor / StarterKit 가져오기
 const Editor = Tiptap.Core.Editor;
@@ -184,6 +190,73 @@ export const SLASH_ITEMS = [
         icon: "⊞",
         command(editor) {
             editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+        }
+    },
+    {
+        id: "image",
+        label: "이미지",
+        description: "이미지 파일 업로드",
+        icon: "🖼",
+        command(editor) {
+            // 파일 선택 다이얼로그 생성
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/jpeg,image/jpg,image/png,image/gif,image/webp';
+
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                // 파일 크기 체크 (5MB)
+                if (file.size > 5 * 1024 * 1024) {
+                    alert('이미지 파일 크기는 5MB 이하여야 합니다.');
+                    return;
+                }
+
+                // 이미지 타입 체크
+                if (!file.type.match(/^image\/(jpeg|jpg|png|gif|webp)$/)) {
+                    alert('jpg, png, gif, webp 형식의 이미지만 업로드 가능합니다.');
+                    return;
+                }
+
+                try {
+                    // 페이지 ID 가져오기
+                    const pageId = window.appState?.currentPageId;
+                    if (!pageId) {
+                        alert('페이지 ID를 찾을 수 없습니다.');
+                        return;
+                    }
+
+                    // FormData 생성
+                    const formData = new FormData();
+                    formData.append('image', file);
+
+                    // 서버에 업로드 (secureFetch 사용)
+                    const response = await secureFetch(`/api/pages/${pageId}/editor-image`, {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('이미지 업로드 실패');
+                    }
+
+                    const data = await response.json();
+
+                    // 에디터에 이미지 삽입
+                    editor.chain().focus().setImageWithCaption({
+                        src: data.url,
+                        alt: file.name,
+                        caption: ''
+                    }).run();
+
+                } catch (error) {
+                    console.error('이미지 업로드 오류:', error);
+                    alert('이미지 업로드에 실패했습니다.');
+                }
+            };
+
+            input.click();
         }
     }
 ];
@@ -503,6 +576,7 @@ export function initEditor() {
             }),
             MathBlock,
             MathInline,
+            ImageWithCaption,
         ],
         content: "<p>불러오는 중...</p>",
         onSelectionUpdate() {

@@ -641,10 +641,9 @@ export async function toggleEditMode() {
                     if (state.editor) {
                         state.editor.commands.setContent(content, { emitUpdate: false });
                     }
-                    console.log('[모드전환] DB에서 최신 데이터 로드 완료');
                 }
             } catch (error) {
-                console.error('[모드전환] 최신 데이터 로드 실패:', error);
+                console.error('최신 데이터 로드 실패:', error);
             }
         }
 
@@ -684,10 +683,9 @@ export async function toggleEditMode() {
                     if (state.editor) {
                         state.editor.commands.setContent(content, { emitUpdate: false });
                     }
-                    console.log('[모드전환] DB에서 최신 데이터 로드 완료');
                 }
             } catch (error) {
-                console.error('[모드전환] 최신 데이터 로드 실패:', error);
+                console.error('최신 데이터 로드 실패:', error);
             }
         }
 

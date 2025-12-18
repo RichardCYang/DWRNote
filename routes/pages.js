@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 
 /**
  * Pages Routes
@@ -26,6 +27,7 @@ module.exports = (dependencies) => {
         wsBroadcastToCollection,
         logError,
         coverUpload,
+        editorImageUpload,
         path,
         fs
     } = dependencies;
@@ -696,6 +698,109 @@ module.exports = (dependencies) => {
         } catch (error) {
             logError("DELETE /api/pages/:id/cover", error);
             res.status(500).json({ error: "커버 제거 실패" });
+        }
+    });
+
+    /**
+     * 파일 해시 계산
+     */
+    function calculateFileHash(filePath) {
+        return new Promise((resolve, reject) => {
+            const hash = crypto.createHash('md5');
+            const stream = fs.createReadStream(filePath);
+
+            stream.on('data', (data) => hash.update(data));
+            stream.on('end', () => resolve(hash.digest('hex')));
+            stream.on('error', (err) => reject(err));
+        });
+    }
+
+    /**
+     * 사용자 폴더에서 같은 해시의 파일 찾기
+     */
+    async function findDuplicateImage(userImgDir, newFileHash, newFilePath) {
+        try {
+            const files = fs.readdirSync(userImgDir);
+
+            for (const file of files) {
+                const filePath = path.join(userImgDir, file);
+
+                // 새로 업로드된 파일은 제외
+                if (filePath === newFilePath) continue;
+
+                // 파일인지 확인
+                const stat = fs.statSync(filePath);
+                if (!stat.isFile()) continue;
+
+                // 해시 비교
+                const existingFileHash = await calculateFileHash(filePath);
+                if (existingFileHash === newFileHash) {
+                    return file; // 중복 파일명 반환
+                }
+            }
+
+            return null; // 중복 없음
+        } catch (error) {
+            console.error('중복 파일 검사 오류:', error);
+            return null;
+        }
+    }
+
+    /**
+     * 에디터 이미지 업로드
+     * POST /api/pages/:id/editor-image
+     */
+    router.post("/:id/editor-image", authMiddleware, editorImageUpload.single('image'), async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+
+        try {
+            // 권한 확인
+            const [rows] = await pool.execute(
+                `SELECT p.collection_id FROM pages p WHERE p.id = ?`,
+                [id]
+            );
+            if (!rows.length) {
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
+
+            const { permission } = await getCollectionPermission(rows[0].collection_id, userId);
+            if (!permission || permission === 'READ') {
+                return res.status(403).json({ error: "권한이 없습니다." });
+            }
+
+            // 업로드된 파일 정보
+            const uploadedFilePath = req.file.path;
+            const uploadedFileName = req.file.filename;
+            const userImgDir = path.dirname(uploadedFilePath);
+
+            // 파일 해시 계산
+            const fileHash = await calculateFileHash(uploadedFilePath);
+
+            // 중복 파일 확인
+            const duplicateFileName = await findDuplicateImage(userImgDir, fileHash, uploadedFilePath);
+
+            let finalFileName;
+
+            if (duplicateFileName) {
+                // 중복 파일이 있으면 새 파일 삭제
+                fs.unlinkSync(uploadedFilePath);
+                finalFileName = duplicateFileName;
+                console.log("POST /api/pages/:id/editor-image 중복 이미지 발견, 기존 파일 사용:", finalFileName);
+            } else {
+                // 중복이 없으면 새 파일 사용
+                finalFileName = uploadedFileName;
+                console.log("POST /api/pages/:id/editor-image 새 이미지 업로드 완료:", finalFileName);
+            }
+
+            // 이미지 경로 반환
+            const imagePath = `${userId}/${finalFileName}`;
+            const imageUrl = `/imgs/${imagePath}`;
+
+            res.json({ url: imageUrl });
+        } catch (error) {
+            logError("POST /api/pages/:id/editor-image", error);
+            res.status(500).json({ error: "이미지 업로드 실패" });
         }
     });
 

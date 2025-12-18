@@ -1,0 +1,357 @@
+/**
+ * Tiptap Image with Caption Node Extension
+ * 캡션 기능이 있는 이미지 노드
+ */
+
+const Node = Tiptap.Core.Node;
+
+export const ImageWithCaption = Node.create({
+    name: 'imageWithCaption',
+
+    group: 'block',
+
+    atom: true,
+
+    addAttributes() {
+        return {
+            src: {
+                default: null
+            },
+            alt: {
+                default: ''
+            },
+            caption: {
+                default: ''
+            },
+            width: {
+                default: '100%'
+            }
+        };
+    },
+
+    parseHTML() {
+        return [
+            {
+                tag: 'figure[data-type="image-with-caption"]',
+                getAttrs: (element) => {
+                    // data-* 속성에서 먼저 읽기 (DB에서 로드한 경우)
+                    const dataSrc = element.getAttribute('data-src');
+                    const dataAlt = element.getAttribute('data-alt');
+                    const dataCaption = element.getAttribute('data-caption');
+                    const dataWidth = element.getAttribute('data-width');
+
+                    if (dataSrc) {
+                        return {
+                            src: dataSrc,
+                            alt: dataAlt || '',
+                            caption: dataCaption || '',
+                            width: dataWidth || '100%'
+                        };
+                    }
+
+                    // DOM 구조에서 읽기 (NodeView에서 생성된 경우)
+                    const img = element.querySelector('img');
+                    const captionDiv = element.querySelector('.image-caption');
+                    const captionInput = element.querySelector('.image-caption-input');
+
+                    return {
+                        src: img?.getAttribute('src') || null,
+                        alt: img?.getAttribute('alt') || '',
+                        caption: captionDiv?.textContent || captionInput?.value || '',
+                        width: element.style.width || '100%'
+                    };
+                }
+            }
+        ];
+    },
+
+    renderHTML({ node, HTMLAttributes }) {
+        return [
+            'figure',
+            {
+                ...HTMLAttributes,
+                'data-type': 'image-with-caption',
+                'data-src': node.attrs.src,
+                'data-alt': node.attrs.alt || '',
+                'data-caption': node.attrs.caption || '',
+                'data-width': node.attrs.width || '100%',
+                'class': 'image-with-caption',
+                'style': `width: ${node.attrs.width || '100%'};`
+            },
+            [
+                'div',
+                { 'class': 'image-container' },
+                [
+                    'img',
+                    {
+                        'src': node.attrs.src,
+                        'alt': node.attrs.alt || '',
+                        'class': 'caption-image'
+                    }
+                ]
+            ],
+            [
+                'div',
+                { 'class': 'image-caption-container' },
+                [
+                    'div',
+                    { 'class': 'image-caption' },
+                    node.attrs.caption || ''
+                ]
+            ]
+        ];
+    },
+
+    addNodeView() {
+        return ({ node, editor, getPos }) => {
+            // 전체 wrapper (figure)
+            const figure = document.createElement('figure');
+            figure.className = 'image-with-caption-wrapper';
+            figure.contentEditable = 'false';
+            figure.style.width = node.attrs.width || '100%';
+
+            let currentCaption = node.attrs.caption || '';
+
+            // 이미지 컨테이너 (resize handle 포함)
+            const imageContainer = document.createElement('div');
+            imageContainer.className = 'image-container';
+            imageContainer.style.position = 'relative';
+
+            // 이미지
+            const img = document.createElement('img');
+            img.src = node.attrs.src;
+            img.alt = node.attrs.alt || '';
+            img.className = 'caption-image';
+
+            imageContainer.appendChild(img);
+
+            // Resize handle (쓰기모드에서만 표시)
+            const resizeHandle = document.createElement('div');
+            resizeHandle.className = 'image-resize-handle';
+            resizeHandle.style.display = editor.isEditable ? 'block' : 'none';
+            imageContainer.appendChild(resizeHandle);
+
+            // 캡션 컨테이너
+            const captionContainer = document.createElement('div');
+            captionContainer.className = 'image-caption-container';
+
+            // 항상 input 사용 (readonly로 읽기/쓰기 모드 제어)
+            const captionElement = document.createElement('input');
+            captionElement.type = 'text';
+            captionElement.className = 'image-caption-input';
+            captionElement.placeholder = '캡션을 입력하세요...';
+            captionElement.value = currentCaption;
+            captionElement.readOnly = !editor.isEditable;
+
+            let captionSaveTimeout = null;
+
+            // 캡션 입력 이벤트
+            captionElement.oninput = (e) => {
+                e.stopPropagation();
+
+                // 입력이 멈춘 후 500ms 후 자동 저장
+                if (captionSaveTimeout) {
+                    clearTimeout(captionSaveTimeout);
+                }
+
+                captionSaveTimeout = setTimeout(() => {
+                    currentCaption = captionElement.value;
+
+                    // 에디터에 자동 저장
+                    if (typeof getPos === 'function') {
+                        const pos = getPos();
+                        try {
+                            const tr = editor.view.state.tr;
+                            tr.setNodeMarkup(pos, null, {
+                                src: node.attrs.src,
+                                alt: node.attrs.alt,
+                                caption: currentCaption,
+                                width: figure.style.width || node.attrs.width
+                            });
+                            editor.view.dispatch(tr);
+                        } catch (error) {
+                            console.error('[ImageWithCaption] 캡션 자동 저장 실패:', error);
+                        }
+                    }
+                }, 500);
+            };
+
+            // 키보드 이벤트 전파 차단
+            captionElement.onkeydown = (e) => {
+                e.stopPropagation();
+
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    captionElement.blur();
+                }
+            };
+
+            captionElement.onkeyup = (e) => {
+                e.stopPropagation();
+            };
+
+            captionElement.onkeypress = (e) => {
+                e.stopPropagation();
+            };
+
+            captionContainer.appendChild(captionElement);
+
+            // 모두 조립
+            figure.appendChild(imageContainer);
+            figure.appendChild(captionContainer);
+
+            // Resize 기능
+            let isResizing = false;
+            let startX = 0;
+            let startWidth = 0;
+
+            const onResizeStart = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                isResizing = true;
+                startX = e.clientX;
+
+                // 현재 width를 px로 가져오기
+                const currentWidth = figure.offsetWidth;
+                startWidth = currentWidth;
+
+                document.addEventListener('mousemove', onResizeMove);
+                document.addEventListener('mouseup', onResizeEnd);
+
+                figure.style.userSelect = 'none';
+            };
+
+            const onResizeMove = (e) => {
+                if (!isResizing) return;
+
+                const deltaX = e.clientX - startX;
+                let newWidth = startWidth + deltaX * 2; // 양쪽으로 확장되므로 2배
+
+                // 실제 문서 작업 영역의 최대 너비 가져오기
+                const editorElement = document.querySelector('#editor .ProseMirror');
+                const maxWidth = editorElement ? editorElement.offsetWidth : 800;
+
+                // 최소/최대 크기 제한
+                const minWidth = 200;
+                newWidth = Math.max(minWidth, Math.min(newWidth, maxWidth));
+
+                // width 업데이트
+                figure.style.width = `${newWidth}px`;
+            };
+
+            const onResizeEnd = () => {
+                if (!isResizing) return;
+
+                isResizing = false;
+                document.removeEventListener('mousemove', onResizeMove);
+                document.removeEventListener('mouseup', onResizeEnd);
+
+                figure.style.userSelect = '';
+
+                // 최종 width를 노드 속성에 저장
+                const finalWidth = figure.style.width;
+
+                if (typeof getPos === 'function') {
+                    const pos = getPos();
+                    try {
+                        const tr = editor.view.state.tr;
+                        const currentNode = tr.doc.nodeAt(pos);
+                        tr.setNodeMarkup(pos, null, {
+                            src: currentNode.attrs.src,
+                            alt: currentNode.attrs.alt,
+                            caption: currentNode.attrs.caption,
+                            width: finalWidth
+                        });
+                        editor.view.dispatch(tr);
+                    } catch (error) {
+                        console.error('[ImageWithCaption] width 저장 실패:', error);
+                    }
+                }
+            };
+
+            resizeHandle.addEventListener('mousedown', onResizeStart);
+
+            // 에디터 상태 변경 감지 (editable 변경 시 readOnly 업데이트)
+            let lastEditableState = editor.isEditable;
+
+            const updateReadOnly = () => {
+                const currentEditableState = editor.isEditable;
+                if (currentEditableState !== lastEditableState) {
+                    lastEditableState = currentEditableState;
+                    captionElement.readOnly = !currentEditableState;
+                    resizeHandle.style.display = currentEditableState ? 'block' : 'none';
+                }
+            };
+
+            // 주기적으로 에디터 상태 체크 (100ms)
+            const stateCheckInterval = setInterval(updateReadOnly, 100);
+
+            return {
+                dom: figure,
+                update: (updatedNode) => {
+                    if (updatedNode.type.name !== this.name) {
+                        return false;
+                    }
+
+                    // 이미지 src가 변경되었으면 업데이트
+                    if (updatedNode.attrs.src !== img.src) {
+                        img.src = updatedNode.attrs.src;
+                        img.alt = updatedNode.attrs.alt || '';
+                    }
+
+                    // 캡션이 외부에서 변경되었으면 업데이트 (포커스 중이 아닐 때만)
+                    if (updatedNode.attrs.caption !== currentCaption && document.activeElement !== captionElement) {
+                        currentCaption = updatedNode.attrs.caption || '';
+                        captionElement.value = currentCaption;
+                    }
+
+                    // width가 변경되었으면 업데이트 (resize 중이 아닐 때만)
+                    if (!isResizing && updatedNode.attrs.width && updatedNode.attrs.width !== figure.style.width) {
+                        figure.style.width = updatedNode.attrs.width;
+                    }
+
+                    return true;
+                },
+                destroy: () => {
+                    // 노드가 파괴될 때 타임아웃 정리
+                    if (captionSaveTimeout) {
+                        clearTimeout(captionSaveTimeout);
+                    }
+                    // interval 정리
+                    clearInterval(stateCheckInterval);
+                    // resize 이벤트 리스너 제거
+                    resizeHandle.removeEventListener('mousedown', onResizeStart);
+                    document.removeEventListener('mousemove', onResizeMove);
+                    document.removeEventListener('mouseup', onResizeEnd);
+                },
+                stopEvent: (event) => {
+                    // 쓰기모드에서 캡션 입력 필드 내부의 이벤트는 내부에서 처리
+                    if (editor.isEditable) {
+                        return captionContainer.contains(event.target);
+                    }
+                    return false;
+                },
+                ignoreMutation: () => {
+                    // 모든 DOM 변경 무시
+                    return true;
+                }
+            };
+        };
+    },
+
+    addCommands() {
+        return {
+            setImageWithCaption: (options) => ({ commands }) => {
+                return commands.insertContent({
+                    type: this.name,
+                    attrs: {
+                        src: options.src,
+                        alt: options.alt || '',
+                        caption: options.caption || ''
+                    }
+                });
+            }
+        };
+    }
+});
