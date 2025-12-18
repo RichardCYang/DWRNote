@@ -298,8 +298,25 @@ let slashMenuEl = null;
 let slashActiveIndex = 0;
 let slashState = {
     active: false,
-    fromPos: null
+    fromPos: null,
+    filterText: '',
+    filteredItems: []
 };
+
+/**
+ * 슬래시 메뉴 필터링 함수
+ */
+function filterSlashItems(filterText) {
+    if (!filterText.trim()) {
+        return SLASH_ITEMS;
+    }
+
+    const lowerFilter = filterText.toLowerCase();
+    return SLASH_ITEMS.filter(item =>
+        item.label.toLowerCase().includes(lowerFilter) ||
+        item.description.toLowerCase().includes(lowerFilter)
+    );
+}
 
 /**
  * 슬래시 메뉴 DOM 요소 생성
@@ -315,26 +332,7 @@ function createSlashMenuElement() {
 
     const listEl = document.createElement("ul");
     listEl.className = "slash-menu-list";
-
-    SLASH_ITEMS.forEach((item, index) => {
-        const li = document.createElement("li");
-        li.className = "slash-menu-item";
-        li.dataset.id = item.id;
-
-        if (index === 0) {
-            li.classList.add("active");
-        }
-
-        li.innerHTML = `
-            <div class="slash-menu-item-icon">${item.icon}</div>
-            <div class="slash-menu-item-main">
-                <div class="slash-menu-item-label">${item.label}</div>
-                <div class="slash-menu-item-desc">${item.description}</div>
-            </div>
-        `;
-
-        listEl.appendChild(li);
-    });
+    listEl.id = "slash-menu-list";
 
     slashMenuEl.appendChild(listEl);
     document.body.appendChild(slashMenuEl);
@@ -348,6 +346,78 @@ function createSlashMenuElement() {
 }
 
 /**
+ * 슬래시 메뉴 항목 렌더링
+ */
+function renderSlashMenuItems() {
+    if (!slashMenuEl) return;
+
+    const listEl = slashMenuEl.querySelector("#slash-menu-list");
+    if (!listEl) return;
+
+    // 기존 항목 제거
+    listEl.innerHTML = "";
+
+    // 필터 텍스트가 있으면 검색 결과 표시
+    if (slashState.filterText) {
+        const filterInfo = document.createElement("li");
+        filterInfo.className = "slash-menu-filter-info";
+        filterInfo.innerHTML = `검색: <strong>${escapeHtml(slashState.filterText)}</strong>`;
+        filterInfo.style.padding = "8px 16px";
+        filterInfo.style.fontSize = "12px";
+        filterInfo.style.color = "#999";
+        filterInfo.style.borderBottom = "1px solid #eee";
+        listEl.appendChild(filterInfo);
+    }
+
+    // 필터링된 항목 렌더링
+    if (slashState.filteredItems.length === 0) {
+        const noResults = document.createElement("li");
+        noResults.className = "slash-menu-no-results";
+        noResults.innerHTML = '검색 결과가 없습니다';
+        noResults.style.padding = "16px";
+        noResults.style.textAlign = "center";
+        noResults.style.color = "#ccc";
+        listEl.appendChild(noResults);
+    } else {
+        slashState.filteredItems.forEach((item, index) => {
+            const li = document.createElement("li");
+            li.className = "slash-menu-item";
+            li.dataset.id = item.id;
+
+            if (index === 0) {
+                li.classList.add("active");
+            }
+
+            li.innerHTML = `
+                <div class="slash-menu-item-icon">${item.icon}</div>
+                <div class="slash-menu-item-main">
+                    <div class="slash-menu-item-label">${item.label}</div>
+                    <div class="slash-menu-item-desc">${item.description}</div>
+                </div>
+            `;
+
+            listEl.appendChild(li);
+        });
+    }
+
+    slashActiveIndex = 0;
+}
+
+/**
+ * HTML 이스케이프 함수
+ */
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+/**
  * 슬래시 메뉴 열기
  */
 function openSlashMenu(coords, fromPos, editor) {
@@ -358,16 +428,12 @@ function openSlashMenu(coords, fromPos, editor) {
     slashState.active = true;
     slashState.fromPos = fromPos;
     slashState.editor = editor;
+    slashState.filterText = '';
+    slashState.filteredItems = filterSlashItems('');
     slashActiveIndex = 0;
 
-    const items = slashMenuEl.querySelectorAll(".slash-menu-item");
-    items.forEach((el, index) => {
-        if (index === 0) {
-            el.classList.add("active");
-        } else {
-            el.classList.remove("active");
-        }
-    });
+    // 메뉴 항목 렌더링
+    renderSlashMenuItems();
 
     slashMenuEl.style.left = `${coords.left}px`;
     slashMenuEl.style.top = `${coords.bottom + 4}px`;
@@ -381,6 +447,8 @@ function closeSlashMenu() {
     slashState.active = false;
     slashState.fromPos = null;
     slashState.editor = null;
+    slashState.filterText = '';
+    slashState.filteredItems = [];
     if (slashMenuEl) {
         slashMenuEl.classList.add("hidden");
     }
@@ -422,12 +490,14 @@ function runSlashCommand(id) {
     editor.chain().focus();
 
     if (typeof slashState.fromPos === "number") {
+        // "/" 부터 현재 커서까지의 텍스트 모두 삭제
+        const selection = editor.state.selection;
         editor
             .chain()
             .focus()
             .deleteRange({
                 from: slashState.fromPos,
-                to: slashState.fromPos + 1
+                to: selection.from
             })
             .run();
     }
@@ -448,6 +518,22 @@ function runSlashCommandActive() {
     const active = items[slashActiveIndex];
     const id = active.dataset.id;
     runSlashCommand(id);
+}
+
+/**
+ * 슬래시 메뉴 텍스트 추출 (fromPos부터 현재 커서까지)
+ */
+function getSlashCommandText(editor) {
+    if (!slashState.active || slashState.fromPos === null) return '';
+
+    const selection = editor.state.selection;
+    const from = slashState.fromPos + 1; // "/" 다음 위치부터
+    const to = selection.from;
+
+    if (to <= from) return '';
+
+    const text = editor.state.doc.textBetween(from, to);
+    return text;
 }
 
 /**
@@ -495,8 +581,21 @@ export function bindSlashKeyHandlers(editor) {
                 closeSlashMenu();
                 return;
             }
+
+            // "/" 다음 문자가 입력/삭제되면 메뉴 필터링 업데이트
+            // 실제 입력은 에디터의 기본 동작에 맡기고,
+            // 다음 업데이트에서 필터링 적용
+            if (event.key === "Backspace" || (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey)) {
+                // 기본 동작 허용 (preventDefault 하지 않음)
+                // onUpdate에서 필터링 처리
+                return;
+            }
         }
     });
+
+    // 에디터 업데이트 시 슬래시 메뉴 필터링 업데이트
+    // 이 부분은 bindSlashKeyHandlers가 아니라 initEditor에서 처리하는 것이 좋음
+    // editor의 onUpdate 콜백에서 메뉴 필터링 실행
 
     // 외부 영역 클릭 시 슬래시 메뉴 닫기
     document.addEventListener("click", (event) => {
@@ -597,6 +696,14 @@ export function initEditor() {
         onUpdate() {
             // 내용 업데이트 시 핸들 재생성
             setTimeout(() => addTableResizeHandles(editor), 50);
+
+            // 슬래시 메뉴 필터링 업데이트
+            if (slashState.active) {
+                const text = getSlashCommandText(editor);
+                slashState.filterText = text;
+                slashState.filteredItems = filterSlashItems(text);
+                renderSlashMenuItems();
+            }
         }
     });
 
