@@ -1504,9 +1504,17 @@ body {
     gap: 12px;
 }
 
+/* 백업/복구 버튼이 있는 컨트롤은 수직 정렬 */
+.settings-controls:has(> button.settings-button) {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+}
+
 .settings-button {
-    padding: 4px 12px !important;
-    font-size: 12px !important;
+    padding: 6px 16px !important;
+    font-size: 13px !important;
+    min-width: 100px;
 }
 
 .settings-button:disabled {
@@ -1637,6 +1645,16 @@ body {
     .settings-controls {
         width: 100%;
         justify-content: space-between;
+    }
+
+    .settings-button {
+        width: 100%;
+        max-width: none;
+    }
+
+    .settings-description {
+        max-width: none;
+        font-size: 11px;
     }
 
     .settings-select {
@@ -2303,16 +2321,12 @@ body {
 .toggle-switch {
     position: relative;
     display: inline-block;
-    width: 50px;
+    width: 50px !important;
+    min-width: 50px;
+    max-width: 50px;
     height: 26px;
-}
-
-/* 토글 스위치 */
-.toggle-switch {
-    position: relative;
-    display: inline-block;
-    width: 50px;
-    height: 26px;
+    flex-shrink: 0;
+    flex-grow: 0;
 }
 
 .toggle-switch input {
@@ -2359,8 +2373,14 @@ body {
 
 /* 설정 설명 텍스트 */
 .settings-description {
-    margin: 8px 0 0 0;
-    font-size: 13px;
+    margin: 0;
+    font-size: 12px;
     color: #6b7280;
-    line-height: 1.5;
+    line-height: 1.6;
+    max-width: 400px;
+}
+
+/* 백업/복구 버튼의 설명은 우측 정렬 */
+.settings-controls:has(> button.settings-button) .settings-description {
+    text-align: right;
 }
