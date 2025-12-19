@@ -483,6 +483,16 @@ body {
     color: #ffffff;
 }
 
+.editor-toolbar button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.editor-toolbar button:disabled:hover {
+    background-color: transparent;
+    color: #4a545e;
+}
+
 /* 툴바 스크롤바 스타일 */
 .editor-toolbar::-webkit-scrollbar {
     height: 4px;

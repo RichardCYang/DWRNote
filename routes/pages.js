@@ -450,6 +450,61 @@ module.exports = (dependencies) => {
     });
 
     /**
+     * 페이지 제목만 수정
+     * PATCH /api/pages/:id
+     * body: { title: string }
+     */
+    router.patch("/:id", authMiddleware, async (req, res) => {
+        const id = req.params.id;
+        const userId = req.user.id;
+        const { title } = req.body;
+
+        if (!title || typeof title !== "string") {
+            return res.status(400).json({ error: "제목이 필요합니다." });
+        }
+
+        const sanitizedTitle = sanitizeInput(title.trim());
+
+        try {
+            const [rows] = await pool.execute(
+                `SELECT collection_id FROM pages WHERE id = ?`,
+                [id]
+            );
+
+            if (!rows.length) {
+                return res.status(404).json({ error: "페이지를 찾을 수 없습니다." });
+            }
+
+            const collectionId = rows[0].collection_id;
+            const { permission } = await getCollectionPermission(collectionId, userId);
+
+            if (!permission || permission === 'READ') {
+                return res.status(403).json({ error: "페이지를 수정할 권한이 없습니다." });
+            }
+
+            const now = new Date();
+            const nowStr = formatDateForDb(now);
+
+            await pool.execute(
+                `UPDATE pages SET title = ?, updated_at = ? WHERE id = ?`,
+                [sanitizedTitle, nowStr, id]
+            );
+
+            // 실시간 동기화
+            wsBroadcastToCollection(collectionId, 'metadata-change', {
+                pageId: id,
+                field: 'title',
+                value: sanitizedTitle
+            }, userId);
+
+            res.json({ success: true, title: sanitizedTitle });
+        } catch (error) {
+            logError("PATCH /api/pages/:id", error);
+            res.status(500).json({ error: "제목 수정 실패." });
+        }
+    });
+
+    /**
      * 페이지에서 이미지 URL 추출
      * @param {Object} page - 페이지 객체 (content, cover_image 포함)
      * @returns {Array<string>} - 이미지 경로 배열 (예: ["1/abc.jpg", "1/xyz.png"])

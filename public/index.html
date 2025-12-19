@@ -114,6 +114,23 @@
                         </div>
                     </div>
                     <div class="editor-toolbar">
+                        <!-- Undo/Redo 버튼 -->
+                        <button
+                            type="button"
+                            data-command="undo"
+                            title="실행 취소 (Ctrl+Z)"
+                            aria-label="실행 취소">
+                            <i class="fa-solid fa-rotate-left"></i>
+                        </button>
+                        <button
+                            type="button"
+                            data-command="redo"
+                            title="다시 실행 (Ctrl+Y)"
+                            aria-label="다시 실행">
+                            <i class="fa-solid fa-rotate-right"></i>
+                        </button>
+                        <span class="toolbar-separator"></span>
+
                         <button type="button" data-command="bold">
                             <b>B</b>
                         </button>

@@ -890,8 +890,8 @@ async function init() {
     const loadedSettings = loadSettings();
     appState.userSettings = loadedSettings;
 
-    // 에디터 초기화
-    appState.editor = initEditor();
+    // 에디터 초기화 (Yjs 동기화 준비 전)
+    appState.editor = await initEditor(null);
     initToolbarElements();
     bindToolbar(appState.editor);
     bindSlashKeyHandlers(appState.editor);

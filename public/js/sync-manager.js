@@ -17,6 +17,7 @@ let yMetadata = null;
 let currentPageId = null;
 let currentCollectionId = null;
 let lastLocalUpdateTime = 0;
+let updateTimeout = null;
 
 const state = {
     editor: null,
@@ -234,6 +235,44 @@ export function stopPageSync() {
 }
 
 /**
+ * 대기 중인 업데이트를 즉시 실행
+ * 읽기 모드 전환 시 데이터 손실 방지
+ */
+export function flushPendingUpdates() {
+    if (updateTimeout) {
+        clearTimeout(updateTimeout);
+
+        // 즉시 실행 (yMetadata만 업데이트, 에디터는 toggleEditMode에서 동기화)
+        if (state.editor && yMetadata) {
+            const newContent = state.editor.getHTML();
+            const oldContent = yMetadata.get('content');
+
+            if (newContent !== oldContent) {
+                yMetadata.set('content', newContent);
+            }
+        }
+
+        updateTimeout = null;
+    }
+}
+
+/**
+ * yMetadata에서 에디터로 콘텐츠 동기화
+ * 읽기 모드 전환 시 호출
+ */
+export function syncEditorFromMetadata() {
+    if (state.editor && yMetadata) {
+        const content = yMetadata.get('content');
+        if (content) {
+            const currentContent = state.editor.getHTML();
+            if (content !== currentContent) {
+                state.editor.commands.setContent(content, { emitUpdate: false });
+            }
+        }
+    }
+}
+
+/**
  * Yjs 업데이트 서버 전송
  */
 function sendYjsUpdate(pageId, update) {
@@ -279,29 +318,8 @@ function handleYjsUpdate(data) {
         const update = Uint8Array.from(atob(data.update), c => c.charCodeAt(0));
 
         // 원격 업데이트는 'remote' origin으로 표시
+        // yMetadata.observe()가 자동으로 에디터를 업데이트함
         Y.applyUpdate(ydoc, update, 'remote');
-
-        // Yjs 메타데이터에서 콘텐츠 가져와서 에디터 업데이트
-        const content = yMetadata.get('content');
-        if (content && state.editor) {
-            const currentContent = state.editor.getHTML();
-            if (content !== currentContent) {
-                // 에디터에 포커스가 있고 최근 200ms 이내에 로컬 업데이트가 있었는지 확인
-                const editorHasFocus = state.editor.view.hasFocus();
-                const timeSinceLastUpdate = Date.now() - lastLocalUpdateTime;
-                const isRecentlyTyping = timeSinceLastUpdate < 200;
-
-                if (editorHasFocus && isRecentlyTyping) {
-                    // 사용자가 타이핑 중이면 업데이트 보류
-                    if (state.editor._setPendingRemoteUpdate) {
-                        state.editor._setPendingRemoteUpdate(content);
-                    }
-                } else {
-                    // 타이핑 중이 아니거나 포커스가 없으면 즉시 업데이트
-                    state.editor.commands.setContent(content, { emitUpdate: false });
-                }
-            }
-        }
     } catch (error) {
         console.error('[WS] Yjs 업데이트 처리 오류:', error);
     }
@@ -620,8 +638,41 @@ function setupEditorBinding() {
     let remoteUpdatePending = null;
 
     // Tiptap 에디터 변경 시 Yjs 업데이트
-    let updateTimeout = null;
     let isUpdating = false;
+
+    // yMetadata 변경 감지 → 에디터 업데이트 (원격 변경만)
+    yMetadata.observe((event, transaction) => {
+        if (isUpdating) {
+            return;
+        }
+
+        // 로컬 변경은 무시 (에디터가 이미 최신 상태)
+        // 원격 변경(origin === 'remote')만 에디터에 적용
+        if (transaction.origin !== 'remote') {
+            return;
+        }
+
+        const content = yMetadata.get('content');
+        if (content && state.editor) {
+            const currentContent = state.editor.getHTML();
+            if (content !== currentContent) {
+                // 에디터에 포커스가 있고 최근 200ms 이내에 로컬 업데이트가 있었는지 확인
+                const editorHasFocus = state.editor.view.hasFocus();
+                const timeSinceLastUpdate = Date.now() - lastLocalUpdateTime;
+                const isRecentlyTyping = timeSinceLastUpdate < 200;
+
+                if (editorHasFocus && isRecentlyTyping) {
+                    // 사용자가 타이핑 중이면 업데이트 보류
+                    remoteUpdatePending = content;
+                } else {
+                    // 타이핑 중이 아니거나 포커스가 없으면 즉시 업데이트
+                    isUpdating = true;
+                    state.editor.commands.setContent(content, { emitUpdate: false });
+                    isUpdating = false;
+                }
+            }
+        }
+    });
 
     state.editor.on('update', ({ editor }) => {
         // 원격 업데이트로 인한 변경은 무시
@@ -645,6 +696,7 @@ function setupEditorBinding() {
                 // origin을 지정하지 않으면 로컬 업데이트로 처리됨
                 yMetadata.set('content', newContent);
             }
+            updateTimeout = null; // 타이머 초기화
         }, 50);
     });
 

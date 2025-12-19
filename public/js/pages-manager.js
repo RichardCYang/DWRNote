@@ -4,7 +4,7 @@
 
 import { secureFetch } from './ui-utils.js';
 import { escapeHtml, showErrorInEditor } from './ui-utils.js';
-import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync } from './sync-manager.js';
+import { startPageSync, stopPageSync, startCollectionSync, stopCollectionSync, flushPendingUpdates, syncEditorFromMetadata } from './sync-manager.js';
 import { showCover, hideCover, updateCoverButtonsVisibility } from './cover-manager.js';
 import { checkPublishStatus, updatePublishButton } from './publish-manager.js';
 
@@ -497,6 +497,43 @@ function extractSearchKeywords(title, htmlContent) {
 /**
  * 현재 페이지 저장 (E2EE 시스템 재설계 - 투명한 암호화)
  */
+/**
+ * 제목만 저장 (읽기모드 전환 시)
+ */
+async function savePageTitle() {
+    const titleInput = document.querySelector("#page-title-input");
+
+    if (!state.currentPageId || !titleInput) {
+        return true;
+    }
+
+    const title = titleInput.value || "제목 없음";
+
+    try {
+        await secureFetch("/api/pages/" + encodeURIComponent(state.currentPageId), {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ title })
+        });
+
+        // 페이지 목록 업데이트
+        state.pages = state.pages.map((p) => {
+            if (p.id === state.currentPageId) {
+                return { ...p, title };
+            }
+            return p;
+        });
+
+        renderPageList();
+        return true;
+    } catch (error) {
+        console.error('제목 저장 실패:', error);
+        return false;
+    }
+}
+
 export async function saveCurrentPage() {
     const titleInput = document.querySelector("#page-title-input");
 
@@ -629,27 +666,14 @@ export async function toggleEditMode() {
     if (!state.editor || !modeToggleBtn) return;
 
     if (state.isWriteMode) {
-        const saveSuccess = await saveCurrentPage();
+        // 대기 중인 업데이트를 즉시 실행 (yMetadata에 저장)
+        flushPendingUpdates();
 
-        if (!saveSuccess) {
-            return;
-        }
+        // yMetadata → 에디터 명시적 동기화 (읽기 모드 전환 전)
+        syncEditorFromMetadata();
 
-        // DB에서 최신 데이터 다시 로드 (동기화 문제 해결)
-        if (state.currentPageId) {
-            try {
-                const res = await fetch("/api/pages/" + encodeURIComponent(state.currentPageId));
-                if (res.ok) {
-                    const page = await res.json();
-                    const content = page.isEncrypted ? "<p></p>" : (page.content || "<p></p>");
-                    if (state.editor) {
-                        state.editor.commands.setContent(content, { emitUpdate: false });
-                    }
-                }
-            } catch (error) {
-                console.error('최신 데이터 로드 실패:', error);
-            }
-        }
+        // 제목만 저장 (content는 Yjs 동기화에 의존)
+        await savePageTitle();
 
         state.isWriteMode = false;
         state.editor.setEditable(false);
@@ -678,21 +702,7 @@ export async function toggleEditMode() {
             return;
         }
 
-        // DB에서 최신 데이터 다시 로드 (동기화 문제 해결)
-        if (state.currentPageId) {
-            try {
-                const res = await fetch("/api/pages/" + encodeURIComponent(state.currentPageId));
-                if (res.ok) {
-                    const page = await res.json();
-                    const content = page.isEncrypted ? "<p></p>" : (page.content || "<p></p>");
-                    if (state.editor) {
-                        state.editor.commands.setContent(content, { emitUpdate: false });
-                    }
-                }
-            } catch (error) {
-                console.error('최신 데이터 로드 실패:', error);
-            }
-        }
+        // DB 로드 제거: 실시간 동기화로 이미 최신 상태
 
         state.isWriteMode = true;
         state.editor.setEditable(true);
