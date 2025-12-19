@@ -73,17 +73,21 @@ module.exports = (dependencies) => {
     /**
      * 페이지 내용을 HTML로 변환
      */
-    function convertPageToHTML(page) {
+    function convertPageToHTML(pageData) {
         // 페이지 메타데이터를 JSON으로 인코딩
         const pageMetadata = {
-            id: page.id,
-            parentId: page.parentId,
-            sortOrder: page.sortOrder,
-            isEncrypted: page.isEncrypted,
-            encryptionSalt: page.encryptionSalt || null,
-            encryptedContent: page.encryptedContent || null,
-            shareAllowed: page.shareAllowed || false,
-            coverPosition: page.coverPosition || 50
+            id: pageData.id,
+            parentId: pageData.parentId,
+            sortOrder: pageData.sortOrder,
+            isEncrypted: pageData.isEncrypted,
+            encryptionSalt: pageData.encryptionSalt || null,
+            encryptedContent: pageData.encryptedContent || null,
+            shareAllowed: pageData.shareAllowed || false,
+            coverImage: pageData.coverImage || null,
+            coverPosition: pageData.coverPosition || 50,
+            publishToken: pageData.publishToken || null,
+            publishedAt: pageData.publishedAt || null,
+            isCoverImage: pageData.coverImage && !DEFAULT_COVERS.includes(pageData.coverImage) ? true : false
         };
 
         const html = `<!DOCTYPE html>
@@ -91,7 +95,7 @@ module.exports = (dependencies) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${escapeHtml(page.title)}</title>
+    <title>${escapeHtml(pageData.title)}</title>
     <!-- NTEOK Page Metadata (DO NOT MODIFY) -->
     <script type="application/json" id="nteok-metadata">
 ${JSON.stringify(pageMetadata, null, 2)}
@@ -123,15 +127,15 @@ ${JSON.stringify(pageMetadata, null, 2)}
     </style>
 </head>
 <body>
-    ${page.coverImage ? `<img class="cover-image" src="../images/${page.coverImage}" alt="Cover">` : ''}
-    <h1>${page.icon ? page.icon + ' ' : ''}${escapeHtml(page.title)}</h1>
+    ${pageData.coverImage ? `<img class="cover-image" src="../images/${pageData.coverImage}" alt="Cover">` : ''}
+    <h1>${pageData.icon ? pageData.icon + ' ' : ''}${escapeHtml(pageData.title)}</h1>
     <div class="metadata">
-        <div>생성: ${new Date(page.createdAt).toLocaleString('ko-KR')}</div>
-        <div>수정: ${new Date(page.updatedAt).toLocaleString('ko-KR')}</div>
-        ${page.isEncrypted ? '<div style="color: #dc2626;">🔒 암호화된 페이지</div>' : ''}
+        <div>생성: ${new Date(pageData.createdAt).toLocaleString('ko-KR')}</div>
+        <div>수정: ${new Date(pageData.updatedAt).toLocaleString('ko-KR')}</div>
+        ${pageData.isEncrypted ? '<div style="color: #dc2626;">🔒 암호화된 페이지</div>' : ''}
     </div>
     <div class="content">
-        ${page.content || '<p>암호화된 내용입니다.</p>'}
+        ${pageData.content || '<p>암호화된 내용입니다.</p>'}
     </div>
 </body>
 </html>`;
@@ -165,10 +169,19 @@ ${JSON.stringify(pageMetadata, null, 2)}
             let metadata = null;
             if (metadataScript) {
                 try {
-                    metadata = JSON.parse(metadataScript.textContent);
+                    const metadataText = metadataScript.textContent?.trim();
+                    if (metadataText) {
+                        metadata = JSON.parse(metadataText);
+                        console.log('[메타데이터 파싱 성공]', {
+                            coverImage: metadata?.coverImage,
+                            isCoverImage: metadata?.isCoverImage
+                        });
+                    }
                 } catch (e) {
-                    console.warn('메타데이터 파싱 실패:', e);
+                    console.warn('[메타데이터 파싱 실패]:', e.message, 'Content:', metadataScript.textContent?.substring(0, 200));
                 }
+            } else {
+                console.warn('[메타데이터 스크립트 없음]');
             }
 
             const titleEl = doc.querySelector('h1');
@@ -209,10 +222,13 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 encryptionSalt: metadata?.encryptionSalt || null,
                 encryptedContent: metadata?.encryptedContent || null,
                 shareAllowed: metadata?.shareAllowed || false,
-                coverImage: coverImage || null,
+                coverImage: coverImage || metadata?.coverImage || null,
                 coverPosition: metadata?.coverPosition || 50,
                 parentId: metadata?.parentId || null,
-                sortOrder: metadata?.sortOrder || 0
+                sortOrder: metadata?.sortOrder || 0,
+                publishToken: metadata?.publishToken || null,
+                publishedAt: metadata?.publishedAt || null,
+                isCoverImage: metadata?.isCoverImage || false
             };
         } catch (error) {
             console.error('HTML 파싱 오류:', error);
@@ -227,7 +243,10 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 coverImage: null,
                 coverPosition: 50,
                 parentId: null,
-                sortOrder: 0
+                sortOrder: 0,
+                publishToken: null,
+                publishedAt: null,
+                isCoverImage: false
             };
         }
     }
@@ -276,7 +295,26 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 [userId]
             );
 
-            // 3. ZIP 아카이브 생성
+            // 3-1. 페이지별 발행 상태 조회
+            const pageIds = pages.map(p => p.id);
+            const publishMap = new Map();
+
+            if (pageIds.length > 0) {
+                const [publishes] = await pool.execute(
+                    `SELECT page_id, token, created_at FROM page_publish_links
+                     WHERE page_id IN (${pageIds.map(() => '?').join(',')}) AND is_active = 1`,
+                    pageIds
+                );
+
+                publishes.forEach(pub => {
+                    publishMap.set(pub.page_id, {
+                        token: pub.token,
+                        createdAt: toIsoString(pub.created_at)
+                    });
+                });
+            }
+
+            // 3-2. ZIP 아카이브 생성
             const archive = archiver('zip', {
                 zlib: { level: 9 } // 최대 압축
             });
@@ -303,6 +341,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                     // 기본 커버가 아닌 경우에만 추가
                     if (!DEFAULT_COVERS.includes(page.cover_image)) {
                         imagesToInclude.add(page.cover_image);
+                        console.log(`[커버 이미지 수집] ${page.title} -> ${page.cover_image}`);
                     }
                 }
             }
@@ -366,6 +405,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 const collectionFolderName = sanitizeFilename(collection.name);
                 const pageFolderName = sanitizeFilename(page.title || 'untitled');
 
+                const publishInfo = publishMap.get(page.id);
                 const pageData = {
                     id: page.id,
                     title: page.title || '제목 없음',
@@ -380,7 +420,9 @@ ${JSON.stringify(pageMetadata, null, 2)}
                     shareAllowed: page.share_allowed ? true : false,
                     icon: page.icon || null,
                     coverImage: page.cover_image || null,
-                    coverPosition: page.cover_position || 50
+                    coverPosition: page.cover_position || 50,
+                    publishToken: publishInfo?.token || null,
+                    publishedAt: publishInfo?.createdAt || null
                 };
 
                 const html = convertPageToHTML(pageData);
@@ -461,6 +503,7 @@ ${JSON.stringify(pageMetadata, null, 2)}
             await connection.beginTransaction();
 
             const collectionMap = new Map(); // 폴더명 -> 컬렉션 ID
+            const pageDataMap = new Map(); // 페이지 ID -> pageData (이미지 처리를 위해)
             let totalPages = 0;
             let totalImages = 0;
 
@@ -550,10 +593,33 @@ ${JSON.stringify(pageMetadata, null, 2)}
                     const pageId = generatePageId(now);
                     const nowStr = formatDateForDb(now);
 
-                    // 커버 이미지 처리 (기본 커버는 제외)
+                    // 디버그: coverImage 정보 출력
+                    if (pageData.coverImage) {
+                        console.log(`[페이지 복원 메타] ${pageData.title} - 커버: ${pageData.coverImage}, isCover: ${pageData.isCoverImage}`);
+                    }
+
+                    // pageData를 맵에 저장 (이미지 처리 시 참조용)
+                    pageDataMap.set(pageId, pageData);
+
+                    // 커버 이미지 처리
                     let coverImage = pageData.coverImage;
-                    if (coverImage && DEFAULT_COVERS.includes(coverImage)) {
-                        coverImage = null;
+                    if (coverImage) {
+                        if (DEFAULT_COVERS.includes(coverImage)) {
+                            // 기본 커버인 경우: 그대로 유지
+                            console.log(`[기본 커버 복원] ${coverImage}`);
+                        } else {
+                            // 커스텀 커버 이미지인 경우 경로의 userId 부분을 새 userId로 업데이트
+                            const parts = coverImage.split('/');
+                            if (parts.length === 2) {
+                                // 원본 형식: oldUserId/filename -> 새 형식: newUserId/filename
+                                coverImage = `${userId}/${parts[1]}`;
+                                console.log(`[커버 경로 업데이트] ${pageData.coverImage} -> ${coverImage}`);
+                            } else {
+                                // 경로 형식이 맞지 않으면 무시
+                                console.log(`[커버 경로 형식 오류] ${coverImage} (parts.length: ${parts.length})`);
+                                coverImage = null;
+                            }
+                        }
                     }
 
                     await connection.execute(
@@ -580,6 +646,22 @@ ${JSON.stringify(pageMetadata, null, 2)}
                         ]
                     );
 
+                    // 발행 정보 복원
+                    if (pageData.publishToken) {
+                        await connection.execute(
+                            `INSERT INTO page_publish_links (token, page_id, owner_user_id, is_active, created_at, updated_at)
+                             VALUES (?, ?, ?, 1, ?, ?)`,
+                            [
+                                pageData.publishToken,
+                                pageId,
+                                userId,
+                                pageData.publishedAt || nowStr,
+                                nowStr
+                            ]
+                        );
+                        console.log(`[발행 정보 복원] ${pageData.title} - 토큰: ${pageData.publishToken}`);
+                    }
+
                     totalPages++;
                     console.log(`[페이지 복원] ${pageData.title} (암호화: ${pageData.isEncrypted})`);
                 }
@@ -588,6 +670,8 @@ ${JSON.stringify(pageMetadata, null, 2)}
                 if (entryName.startsWith('images/')) {
                     const imagePath = entryName.substring('images/'.length);
 
+                    console.log(`[이미지 처리 시작] ${imagePath}`);
+
                     // 기본 커버 이미지는 건너뛰기
                     if (DEFAULT_COVERS.includes(imagePath)) {
                         console.log(`[이미지 건너뛰기] 기본 커버: ${imagePath}`);
@@ -595,27 +679,48 @@ ${JSON.stringify(pageMetadata, null, 2)}
                     }
 
                     const parts = imagePath.split('/');
-                    if (parts.length < 2) continue;
+                    if (parts.length < 2) {
+                        console.log(`[이미지 경로 오류] ${imagePath} (parts.length: ${parts.length})`);
+                        continue;
+                    }
 
-                    // 이미지를 사용자의 covers 또는 imgs 폴더에 저장
+                    // 이미지 타입 판별: userId/filename 형식이므로 첫 번째 부분을 제거하고 나머지는 filename
+                    const filename = parts[parts.length - 1];
+
+                    // 백업에서 원래 어느 폴더에 있었는지 판별
+                    // pageDataMap에서 이 이미지가 커버인지 확인
+                    let isCoverImage = false;
+
+                    for (const pageData of pageDataMap.values()) {
+                        if (pageData && pageData.coverImage && pageData.coverImage.includes(filename) && pageData.isCoverImage) {
+                            isCoverImage = true;
+                            console.log(`[커버 이미지 감지] ${filename} (${pageData.title})`);
+                            break;
+                        }
+                    }
+
+                    // 디렉토리 설정
                     let targetDir;
-                    if (imagePath.includes('cover') || entry.entryName.includes('cover')) {
+                    if (isCoverImage) {
                         targetDir = path.join(__dirname, '..', 'covers', String(userId));
                     } else {
                         targetDir = path.join(__dirname, '..', 'imgs', String(userId));
                     }
 
+                    console.log(`[이미지 저장 위치] ${imagePath} -> ${targetDir}`);
+
                     // 디렉토리 생성
                     if (!fs.existsSync(targetDir)) {
                         fs.mkdirSync(targetDir, { recursive: true });
+                        console.log(`[디렉토리 생성] ${targetDir}`);
                     }
 
-                    const filename = parts[parts.length - 1];
                     const targetPath = path.join(targetDir, filename);
 
                     // 이미지 저장
                     fs.writeFileSync(targetPath, entry.getData());
                     totalImages++;
+                    console.log(`[이미지 복원 완료] ${imagePath} -> ${filename}`);
                 }
             }
 
