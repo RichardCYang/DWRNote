@@ -895,6 +895,258 @@ module.exports = (dependencies) => {
     });
 
     /**
+     * 북마크 메타데이터 추출
+     * POST /api/pages/:id/bookmark-metadata
+     */
+    router.post("/:id/bookmark-metadata", authMiddleware, async (req, res) => {
+        const pageId = req.params.id;
+        const userId = req.user.id;
+        const { url } = req.body;
+
+        try {
+            // 권한 확인
+            const [rows] = await pool.execute(
+                `SELECT p.collection_id FROM pages p WHERE p.id = ? AND p.user_id = ?`,
+                [pageId, userId]
+            );
+            if (!rows.length) {
+                return res.status(404).json({ success: false, error: "페이지를 찾을 수 없습니다." });
+            }
+
+            // URL 유효성 검사
+            if (!url || typeof url !== 'string') {
+                return res.status(400).json({ success: false, error: "유효한 URL을 입력해주세요." });
+            }
+
+            let parsedUrl;
+            try {
+                parsedUrl = new URL(url);
+                if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+                    throw new Error('HTTP/HTTPS URL만 지원합니다.');
+                }
+            } catch (error) {
+                return res.status(400).json({ success: false, error: "유효하지 않은 URL입니다." });
+            }
+
+            // SSRF 방지: 내부 IP 주소 차단
+            const hostname = parsedUrl.hostname.toLowerCase();
+            const blockedPatterns = [
+                /^localhost$/,
+                /^127\./,
+                /^192\.168\./,
+                /^10\./,
+                /^172\.(1[6-9]|2[0-9]|3[01])\./,
+                /^0\.0\.0\.0$/,
+                /^::1$/,  // IPv6 localhost
+                /^fc00:/,  // IPv6 private
+                /^fe80:/   // IPv6 link-local
+            ];
+
+            if (blockedPatterns.some(pattern => pattern.test(hostname))) {
+                return res.status(400).json({
+                    success: false,
+                    error: "내부 네트워크 주소는 사용할 수 없습니다."
+                });
+            }
+
+            // URL에서 HTML 가져오기
+            const axios = require('axios');
+            const cheerio = require('cheerio');
+
+            let response;
+            try {
+                response = await axios.get(url, {
+                    timeout: 10000, // 10초 타임아웃
+                    maxRedirects: 5,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (compatible; NTEOK-Bot/1.0)'
+                    },
+                    maxContentLength: 5 * 1024 * 1024 // 5MB 제한
+                });
+            } catch (error) {
+                console.error('[BookmarkAPI] URL 가져오기 실패:', error.message);
+                return res.status(400).json({
+                    success: false,
+                    error: "URL에 접근할 수 없습니다. CORS 또는 네트워크 오류일 수 있습니다."
+                });
+            }
+
+            // HTML 파싱
+            const $ = cheerio.load(response.data);
+
+            // 메타데이터 추출 (우선순위: Open Graph > Twitter Card > 기본 메타태그)
+            const ogTitle = $('meta[property="og:title"]').attr('content');
+            const twitterTitle = $('meta[name="twitter:title"]').attr('content');
+            const pageTitle = $('title').text();
+
+            const ogDesc = $('meta[property="og:description"]').attr('content');
+            const twitterDesc = $('meta[name="twitter:description"]').attr('content');
+            const metaDesc = $('meta[name="description"]').attr('content');
+
+            const ogImage = $('meta[property="og:image"]').attr('content');
+            const twitterImage = $('meta[name="twitter:image"]').attr('content');
+
+            console.log(`[BookmarkAPI] URL: ${url}`);
+            console.log(`[BookmarkAPI] og:title=${ogTitle}, twitter:title=${twitterTitle}, title=${pageTitle}`);
+            console.log(`[BookmarkAPI] og:description=${ogDesc}`);
+            console.log(`[BookmarkAPI] og:image=${ogImage}, twitter:image=${twitterImage}`);
+
+            const metadata = {
+                url: url,
+                title:
+                    ogTitle ||
+                    twitterTitle ||
+                    pageTitle ||
+                    '제목 없음',
+                description:
+                    ogDesc ||
+                    twitterDesc ||
+                    metaDesc ||
+                    '',
+                thumbnail:
+                    ogImage ||
+                    twitterImage ||
+                    ''
+            };
+
+            console.log(`[BookmarkAPI] 최종 metadata:`, metadata);
+
+            // 상대 URL을 절대 URL로 변환
+            if (metadata.thumbnail && !metadata.thumbnail.startsWith('http')) {
+                try {
+                    metadata.thumbnail = new URL(metadata.thumbnail, parsedUrl.origin).href;
+                } catch (error) {
+                    metadata.thumbnail = '';
+                }
+            }
+
+            // 제목/설명 길이 제한
+            if (metadata.title && metadata.title.length > 200) {
+                metadata.title = metadata.title.substring(0, 197) + '...';
+            }
+            if (metadata.description && metadata.description.length > 300) {
+                metadata.description = metadata.description.substring(0, 297) + '...';
+            }
+
+            res.json({ success: true, metadata });
+
+        } catch (error) {
+            logError("POST /api/pages/:id/bookmark-metadata", error);
+            res.status(500).json({ success: false, error: "메타데이터 추출 실패" });
+        }
+    });
+
+    /**
+     * 북마크 이미지 프록시 (CSP 정책 우회)
+     * GET /api/pages/proxy/image?url=...
+     */
+    router.get("/proxy/image", authMiddleware, async (req, res) => {
+        const { url } = req.query;
+
+        try {
+            // URL 유효성 검사
+            if (!url || typeof url !== 'string') {
+                return res.status(400).json({ error: "유효한 URL을 입력해주세요." });
+            }
+
+            let parsedUrl;
+            try {
+                parsedUrl = new URL(url);
+                if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+                    throw new Error('HTTP/HTTPS URL만 지원합니다.');
+                }
+            } catch (error) {
+                return res.status(400).json({ error: "유효하지 않은 URL입니다." });
+            }
+
+            // SSRF 방지: 내부 IP 주소 차단
+            const hostname = parsedUrl.hostname.toLowerCase();
+            const blockedPatterns = [
+                /^localhost$/,
+                /^127\./,
+                /^192\.168\./,
+                /^10\./,
+                /^172\.(1[6-9]|2[0-9]|3[01])\./,
+                /^0\.0\.0\.0$/,
+                /^::1$/,
+                /^fc00:/,
+                /^fe80:/
+            ];
+
+            if (blockedPatterns.some(pattern => pattern.test(hostname))) {
+                return res.status(400).json({ error: "내부 네트워크 주소는 사용할 수 없습니다." });
+            }
+
+            // 이미지 가져오기
+            const axios = require('axios');
+
+            let response;
+            try {
+                response = await axios.get(url, {
+                    timeout: 10000,
+                    maxRedirects: 5,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (compatible; NTEOK-Bot/1.0)'
+                    },
+                    maxContentLength: 5 * 1024 * 1024, // 5MB 제한
+                    responseType: 'arraybuffer' // 바이너리로 받기
+                });
+            } catch (error) {
+                console.error('[ProxyImage] 이미지 가져오기 실패:', error.message);
+                return res.status(400).json({ error: "이미지를 가져올 수 없습니다." });
+            }
+
+            // 이미지 타입 검증
+            let contentType = response.headers['content-type'] || 'image/jpeg';
+
+            // Content-Type이 이미지 타입인지 확인 (jpeg_s2, jpeg_s1 등 특수 확장자도 포함)
+            if (!contentType.startsWith('image/')) {
+                // 이미지 타입이 아니면, 버퍼의 매직 넘버로 확인
+                const buffer = response.data;
+                let detectedType = null;
+
+                // JPEG 매직 넘버: FF D8 FF
+                if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+                    detectedType = 'image/jpeg';
+                }
+                // PNG 매직 넘버: 89 50 4E 47
+                else if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+                    detectedType = 'image/png';
+                }
+                // GIF 매직 넘버: 47 49 46
+                else if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+                    detectedType = 'image/gif';
+                }
+                // WebP 매직 넘버: 52 49 46 46 ... 57 45 42 50
+                else if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+                         buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+                    detectedType = 'image/webp';
+                }
+
+                if (detectedType) {
+                    contentType = detectedType;
+                    console.log(`[ProxyImage] Content-Type 자동 감지: ${contentType}`);
+                } else {
+                    return res.status(400).json({ error: "지원하지 않는 이미지 형식입니다." });
+                }
+            } else {
+                // Content-Type이 image/로 시작하면 그대로 사용
+                console.log(`[ProxyImage] Content-Type: ${contentType}`);
+            }
+
+            // 캐시 헤더 설정 (1시간)
+            res.set('Cache-Control', 'public, max-age=3600');
+            res.set('Content-Type', contentType);
+
+            res.send(response.data);
+
+        } catch (error) {
+            logError("GET /api/pages/proxy/image", error);
+            res.status(500).json({ error: "이미지 프록시 실패" });
+        }
+    });
+
+    /**
      * 페이지 발행 상태 확인
      * GET /api/pages/:id/publish
      */

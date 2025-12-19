@@ -32,6 +32,9 @@ import { MathBlock, MathInline } from './math-node.js';
 // ImageWithCaption 노드 import
 import { ImageWithCaption } from './image-with-caption-node.js';
 
+// BookmarkBlock 노드 import
+import { BookmarkBlock, BookmarkContainerBlock } from './bookmark-node.js';
+
 // 전역 Tiptap 번들에서 Editor / StarterKit 가져오기
 const Editor = Tiptap.Core.Editor;
 const StarterKit = Tiptap.StarterKit;
@@ -257,6 +260,15 @@ export const SLASH_ITEMS = [
             };
 
             input.click();
+        }
+    },
+    {
+        id: "bookmark",
+        label: "북마크",
+        description: "웹 페이지 링크 카드들",
+        icon: "🔖",
+        command(editor) {
+            editor.chain().focus().setBookmarkContainer().run();
         }
     }
 ];
@@ -697,6 +709,8 @@ export function initEditor() {
             MathBlock,
             MathInline,
             ImageWithCaption,
+            BookmarkContainerBlock,
+            BookmarkBlock,
         ],
         content: "<p>불러오는 중...</p>",
         onSelectionUpdate() {
