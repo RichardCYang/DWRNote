@@ -32,7 +32,8 @@ module.exports = (dependencies) => {
         SESSION_TTL_MS,
         IS_PRODUCTION,
         BCRYPT_SALT_ROUNDS,
-        logError
+        logError,
+        recordLoginAttempt
     } = dependencies;
 
     /**
@@ -241,6 +242,17 @@ module.exports = (dependencies) => {
             });
 
             if (!verified) {
+                // 로그인 로그 기록
+                await recordLoginAttempt({
+                    userId: userId,
+                    username: username,
+                    ipAddress: req.ip || req.connection.remoteAddress,
+                    port: req.connection.remotePort || 0,
+                    success: false,
+                    failureReason: 'TOTP 인증 실패',
+                    userAgent: req.headers['user-agent'] || null
+                });
+
                 return res.status(401).json({ error: "잘못된 인증 코드입니다." });
             }
 
@@ -281,6 +293,17 @@ module.exports = (dependencies) => {
             });
 
             res.json({ success: true });
+
+            // 로그인 로그 기록 (비동기, 응답 후)
+            recordLoginAttempt({
+                userId: userId,
+                username: username,
+                ipAddress: req.ip || req.connection.remoteAddress,
+                port: req.connection.remotePort || 0,
+                success: true,
+                failureReason: null,
+                userAgent: req.headers['user-agent'] || null
+            });
         } catch (error) {
             logError("POST /api/totp/verify-login", error);
             res.status(500).json({ error: "TOTP 검증 중 오류가 발생했습니다." });

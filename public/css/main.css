@@ -2747,3 +2747,166 @@ body {
 #publish-btn.published:hover {
     background-color: #15803d;
 }
+
+/* 로그인 로그 테이블 스타일 */
+#login-logs-modal table {
+    min-width: 800px; /* 테이블 최소 너비 설정 */
+}
+
+#login-logs-modal table th {
+    white-space: nowrap; /* 헤더 텍스트 줄바꿈 방지 */
+}
+
+#login-logs-table-body tr {
+    border-bottom: 1px solid #e5e7eb;
+    transition: background-color 0.15s ease;
+}
+
+#login-logs-table-body tr:hover {
+    background-color: #f9fafb;
+}
+
+#login-logs-table-body td {
+    padding: 12px;
+    color: #374151;
+    white-space: nowrap; /* 셀 텍스트 줄바꿈 방지 */
+}
+
+/* 로그 상태 뱃지 */
+.login-log-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.login-log-status-badge.success {
+    background: #dcfce7;
+    color: #16a34a;
+}
+
+.login-log-status-badge.failure {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+/* 페이지네이션 버튼 */
+.pagination-btn {
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #374151;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.15s ease;
+}
+
+.pagination-btn:hover:not(:disabled) {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+}
+
+.pagination-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pagination-btn.active {
+    background: #2d5f5d;
+    color: white;
+    border-color: #2d5f5d;
+}
+
+.pagination-info {
+    font-size: 14px;
+    color: #6b7280;
+}
+
+/* 반응형 디자인 */
+@media (max-width: 1024px) {
+    #login-logs-modal .modal-content {
+        max-width: 95vw;
+        width: 95vw;
+    }
+}
+
+@media (max-width: 768px) {
+    #login-logs-modal .modal-content {
+        max-width: 95vw;
+        width: 95vw;
+        max-height: 90vh;
+        margin: 20px auto;
+    }
+
+    #login-logs-modal .modal-body {
+        padding: 16px !important;
+    }
+
+    #login-logs-stats {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 12px !important;
+    }
+
+    #login-logs-modal table {
+        min-width: 700px; /* 모바일에서도 최소 너비 유지 */
+        font-size: 13px;
+    }
+
+    #login-logs-modal table th {
+        padding: 10px 8px !important;
+        font-size: 12px;
+    }
+
+    #login-logs-table-body td {
+        font-size: 12px;
+        padding: 10px 8px;
+    }
+
+    .login-log-status-badge {
+        font-size: 11px;
+        padding: 3px 8px;
+    }
+
+    .pagination-btn {
+        padding: 6px 10px;
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 480px) {
+    #login-logs-modal .modal-content {
+        max-width: 100vw;
+        width: 100vw;
+        max-height: 100vh;
+        margin: 0;
+        border-radius: 0;
+    }
+
+    #login-logs-stats {
+        grid-template-columns: 1fr !important;
+    }
+
+    #login-logs-modal table {
+        min-width: 650px;
+        font-size: 12px;
+    }
+
+    #login-logs-modal table th,
+    #login-logs-table-body td {
+        padding: 8px 6px;
+    }
+
+    .pagination-btn {
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+
+    #login-logs-pagination {
+        gap: 4px !important;
+    }
+}

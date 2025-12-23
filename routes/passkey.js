@@ -17,7 +17,8 @@ module.exports = (dependencies) => {
         SESSION_TTL_MS,
         IS_PRODUCTION,
         BASE_URL,
-        logError
+        logError,
+        recordLoginAttempt
     } = dependencies;
 
     const {
@@ -332,6 +333,24 @@ module.exports = (dependencies) => {
             });
 
             if (!verification.verified) {
+                // 사용자 정보 조회하여 로그 기록
+                const [userRows] = await pool.execute(
+                    "SELECT username FROM users WHERE id = ?",
+                    [userId]
+                );
+                const username = userRows.length > 0 ? userRows[0].username : '알 수 없음';
+
+                // 로그인 로그 기록
+                await recordLoginAttempt({
+                    userId: userId,
+                    username: username,
+                    ipAddress: req.ip || req.connection.remoteAddress,
+                    port: req.connection.remotePort || 0,
+                    success: false,
+                    failureReason: '패스키 인증 실패',
+                    userAgent: req.headers['user-agent'] || null
+                });
+
                 return res.status(401).json({ error: "패스키 인증에 실패했습니다." });
             }
 
@@ -400,6 +419,17 @@ module.exports = (dependencies) => {
             });
 
             res.json({ success: true });
+
+            // 로그인 로그 기록 (비동기, 응답 후)
+            recordLoginAttempt({
+                userId: userId,
+                username: username,
+                ipAddress: req.ip || req.connection.remoteAddress,
+                port: req.connection.remotePort || 0,
+                success: true,
+                failureReason: null,
+                userAgent: req.headers['user-agent'] || null
+            });
         } catch (error) {
             logError("POST /api/passkey/authenticate/verify", error);
             res.status(500).json({ error: "패스키 인증 중 오류가 발생했습니다." });

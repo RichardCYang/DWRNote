@@ -31,7 +31,9 @@ module.exports = (dependencies) => {
         BCRYPT_SALT_ROUNDS,
         createCollection,
         authMiddleware,
-        authLimiter
+        authLimiter,
+        recordLoginAttempt,
+        maskIPAddress
     } = dependencies;
 
     /**
@@ -59,6 +61,17 @@ module.exports = (dependencies) => {
             );
 
             if (!rows.length) {
+                // 로그인 로그 기록
+                await recordLoginAttempt({
+                    userId: null,
+                    username: trimmedUsername,
+                    ipAddress: req.ip || req.connection.remoteAddress,
+                    port: req.connection.remotePort || 0,
+                    success: false,
+                    failureReason: '존재하지 않는 사용자',
+                    userAgent: req.headers['user-agent'] || null
+                });
+
                 // 보안: 사용자 존재 여부를 노출하지 않도록 통일된 메시지 사용
                 console.warn(`[로그인 실패] IP: ${req.ip}, 사유: 인증 실패`);
                 return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
@@ -68,6 +81,17 @@ module.exports = (dependencies) => {
 
             const ok = await bcrypt.compare(password, user.password_hash);
             if (!ok) {
+                // 로그인 로그 기록
+                await recordLoginAttempt({
+                    userId: user.id,
+                    username: user.username,
+                    ipAddress: req.ip || req.connection.remoteAddress,
+                    port: req.connection.remotePort || 0,
+                    success: false,
+                    failureReason: '비밀번호 불일치',
+                    userAgent: req.headers['user-agent'] || null
+                });
+
                 // 보안: 사용자 존재 여부를 노출하지 않도록 통일된 메시지 사용
                 console.warn(`[로그인 실패] IP: ${req.ip}, 사유: 인증 실패`);
                 return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
@@ -137,6 +161,17 @@ module.exports = (dependencies) => {
                     id: user.id,
                     username: user.username
                 }
+            });
+
+            // 로그인 로그 기록 (비동기, 응답 후)
+            recordLoginAttempt({
+                userId: user.id,
+                username: user.username,
+                ipAddress: req.ip || req.connection.remoteAddress,
+                port: req.connection.remotePort || 0,
+                success: true,
+                failureReason: null,
+                userAgent: req.headers['user-agent'] || null
             });
         } catch (error) {
             logError("POST /api/auth/login", error);
@@ -430,6 +465,100 @@ module.exports = (dependencies) => {
         } catch (error) {
             logError("PUT /api/auth/security-settings", error);
             res.status(500).json({ error: "보안 설정 업데이트 중 오류가 발생했습니다." });
+        }
+    });
+
+    /**
+     * 로그인 로그 조회
+     * GET /api/auth/login-logs
+     * query: { limit?: number, offset?: number }
+     */
+    router.get("/login-logs", authMiddleware, async (req, res) => {
+        try {
+            const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+            const offset = parseInt(req.query.offset) || 0;
+
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            const thirtyDaysAgoStr = formatDateForDb(thirtyDaysAgo);
+
+            const [rows] = await pool.execute(
+                `SELECT id, ip_address, port, country, region, city, timezone,
+                        user_agent, success, failure_reason, created_at
+                 FROM login_logs
+                 WHERE user_id = ? AND created_at >= ?
+                 ORDER BY created_at DESC
+                 LIMIT ? OFFSET ?`,
+                [req.user.id, thirtyDaysAgoStr, limit, offset]
+            );
+
+            const [countRows] = await pool.execute(
+                `SELECT COUNT(*) as total FROM login_logs
+                 WHERE user_id = ? AND created_at >= ?`,
+                [req.user.id, thirtyDaysAgoStr]
+            );
+
+            const logs = rows.map(log => ({
+                ...log,
+                ip_address: maskIPAddress(log.ip_address),
+                success: log.success === 1
+            }));
+
+            res.json({
+                logs: logs,
+                total: countRows[0].total,
+                limit: limit,
+                offset: offset
+            });
+        } catch (error) {
+            logError("GET /api/auth/login-logs", error);
+            res.status(500).json({ error: "로그인 로그 조회 중 오류가 발생했습니다." });
+        }
+    });
+
+    /**
+     * 로그인 로그 통계 조회
+     * GET /api/auth/login-logs/stats
+     */
+    router.get("/login-logs/stats", authMiddleware, async (req, res) => {
+        try {
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            const thirtyDaysAgoStr = formatDateForDb(thirtyDaysAgo);
+
+            const [successRows] = await pool.execute(
+                `SELECT success, COUNT(*) as count FROM login_logs
+                 WHERE user_id = ? AND created_at >= ?
+                 GROUP BY success`,
+                [req.user.id, thirtyDaysAgoStr]
+            );
+
+            const stats = { successCount: 0, failureCount: 0, totalCount: 0 };
+            successRows.forEach(row => {
+                if (row.success === 1) stats.successCount = row.count;
+                else stats.failureCount = row.count;
+                stats.totalCount += row.count;
+            });
+
+            const [ipRows] = await pool.execute(
+                `SELECT COUNT(DISTINCT ip_address) as unique_ips FROM login_logs
+                 WHERE user_id = ? AND created_at >= ?`,
+                [req.user.id, thirtyDaysAgoStr]
+            );
+            stats.uniqueIPs = ipRows[0].unique_ips;
+
+            const [lastLoginRows] = await pool.execute(
+                `SELECT created_at FROM login_logs
+                 WHERE user_id = ? AND success = 1 AND created_at >= ?
+                 ORDER BY created_at DESC LIMIT 1`,
+                [req.user.id, thirtyDaysAgoStr]
+            );
+            stats.lastLoginAt = lastLoginRows.length > 0 ? lastLoginRows[0].created_at : null;
+
+            res.json(stats);
+        } catch (error) {
+            logError("GET /api/auth/login-logs/stats", error);
+            res.status(500).json({ error: "로그인 로그 통계 조회 중 오류가 발생했습니다." });
         }
     });
 

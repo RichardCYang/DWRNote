@@ -74,6 +74,9 @@ import {
     checkPublishStatus,
     updatePublishButton
 } from './publish-manager.js';
+import {
+    bindLoginLogsModal
+} from './login-logs-manager.js';
 
 // ==================== Global State ====================
 const appState = {
@@ -939,6 +942,7 @@ async function init() {
     bindTotpModals();
     bindPasskeyModals();
     bindAccountManagementButtons();
+    bindLoginLogsModal();
 
     // 데이터 로드
     await fetchAndDisplayCurrentUser();

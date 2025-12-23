@@ -521,6 +521,18 @@
                                 </p>
                             </div>
                         </div>
+                        <div class="settings-item">
+                            <label>로그인 로그</label>
+                            <div class="settings-controls">
+                                <button id="view-login-logs-btn" class="primary-button settings-button">
+                                    <i class="fa-solid fa-list"></i>
+                                    로그 보기
+                                </button>
+                                <p class="settings-description">
+                                    최근 30일간의 로그인 시도 기록을 확인할 수 있습니다.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                     <div class="settings-section">
                         <h3>편집기</h3>
@@ -576,6 +588,74 @@
                     <button id="save-settings-btn" class="primary-button">
                         저장
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 로그인 로그 모달 -->
+        <div id="login-logs-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 900px; max-height: 80vh;">
+                <div class="modal-header">
+                    <h2>로그인 로그</h2>
+                    <button id="close-login-logs-btn" class="modal-close-btn">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="modal-body" style="padding: 24px; overflow-y: auto;">
+                    <!-- 통계 섹션 -->
+                    <div id="login-logs-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                        <div style="padding: 16px; background: #f0fdf4; border-radius: 8px; border: 1px solid #86efac;">
+                            <div style="font-size: 12px; color: #15803d; font-weight: 500; margin-bottom: 4px;">성공한 로그인</div>
+                            <div id="login-logs-success-count" style="font-size: 24px; font-weight: 700; color: #16a34a;">-</div>
+                        </div>
+                        <div style="padding: 16px; background: #fef2f2; border-radius: 8px; border: 1px solid #fca5a5;">
+                            <div style="font-size: 12px; color: #991b1b; font-weight: 500; margin-bottom: 4px;">실패한 시도</div>
+                            <div id="login-logs-failure-count" style="font-size: 24px; font-weight: 700; color: #dc2626;">-</div>
+                        </div>
+                        <div style="padding: 16px; background: #eff6ff; border-radius: 8px; border: 1px solid #93c5fd;">
+                            <div style="font-size: 12px; color: #1e40af; font-weight: 500; margin-bottom: 4px;">고유 IP 수</div>
+                            <div id="login-logs-unique-ips" style="font-size: 24px; font-weight: 700; color: #2563eb;">-</div>
+                        </div>
+                        <div style="padding: 16px; background: #faf5ff; border-radius: 8px; border: 1px solid #d8b4fe;">
+                            <div style="font-size: 12px; color: #6b21a8; font-weight: 500; margin-bottom: 4px;">마지막 로그인</div>
+                            <div id="login-logs-last-login" style="font-size: 14px; font-weight: 600; color: #7c3aed; margin-top: 4px;">-</div>
+                        </div>
+                    </div>
+
+                    <!-- 로그 테이블 -->
+                    <div style="overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <thead style="background: #f9fafb; border-bottom: 2px solid #e5e7eb;">
+                                <tr>
+                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151;">날짜/시간</th>
+                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151;">IP 주소</th>
+                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151;">포트</th>
+                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151;">위치</th>
+                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151;">상태</th>
+                                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151;">디바이스</th>
+                                </tr>
+                            </thead>
+                            <tbody id="login-logs-table-body">
+                                <tr>
+                                    <td colspan="6" style="padding: 40px; text-align: center; color: #9ca3af;">
+                                        로그를 불러오는 중...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 페이지네이션 -->
+                    <div id="login-logs-pagination" style="display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 20px;">
+                        <!-- JavaScript로 동적 생성 -->
+                    </div>
+
+                    <!-- 설명 -->
+                    <div style="margin-top: 20px; padding: 12px; background: #f3f4f6; border-radius: 6px; font-size: 13px; color: #6b7280;">
+                        <i class="fa-solid fa-info-circle" style="margin-right: 6px;"></i>
+                        최근 30일간의 로그인 기록만 표시됩니다. 개인정보 보호를 위해 IP 주소의 일부가 마스킹됩니다.
+                    </div>
                 </div>
             </div>
         </div>

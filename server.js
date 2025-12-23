@@ -17,6 +17,7 @@ const certManager = require("./cert-manager");
 const multer = require("multer");
 const fs = require("fs");
 const WebSocket = require("ws");
+const geoip = require("geoip-lite");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -151,6 +152,23 @@ function cleanupExpiredWebAuthnChallenges() {
 setInterval(cleanupExpiredWebAuthnChallenges, 5 * 60 * 1000);
 
 /**
+ * 30일 이상 오래된 로그인 로그 정리
+ */
+function cleanupOldLoginLogs() {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoStr = formatDateForDb(thirtyDaysAgo);
+
+    pool.execute("DELETE FROM login_logs WHERE created_at < ?", [thirtyDaysAgoStr])
+        .then(([result]) => {
+            if (result.affectedRows > 0) {
+                console.log(`[로그인 로그 정리] ${result.affectedRows}개의 30일 이상 된 로그를 삭제했습니다.`);
+            }
+        })
+        .catch(err => console.error("로그인 로그 정리 중 오류:", err));
+}
+
+/**
  * Date -> MySQL DATETIME 문자열 (YYYY-MM-DD HH:MM:SS)
  */
 function formatDateForDb(date) {
@@ -164,6 +182,140 @@ function formatDateForDb(date) {
     const second = pad(date.getSeconds());
 
     return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+/**
+ * IP 주소로부터 위치 정보 조회 (GeoIP)
+ * @param {string} ip - IP 주소
+ * @returns {object} { country, region, city, timezone }
+ */
+function getLocationFromIP(ip) {
+    try {
+        // 로컬 개발 환경 (localhost, 127.0.0.1, ::1, 사설 IP)
+        if (!ip || ip === '::1' || ip === '127.0.0.1' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.16.')) {
+            return {
+                country: 'KR',
+                region: '서울',
+                city: '서울',
+                timezone: 'Asia/Seoul'
+            };
+        }
+
+        const geo = geoip.lookup(ip);
+
+        if (!geo) {
+            return {
+                country: null,
+                region: null,
+                city: null,
+                timezone: null
+            };
+        }
+
+        return {
+            country: geo.country || null,
+            region: geo.region || null,
+            city: geo.city || null,
+            timezone: geo.timezone || null
+        };
+    } catch (error) {
+        console.error('GeoIP 조회 오류:', error);
+        return {
+            country: null,
+            region: null,
+            city: null,
+            timezone: null
+        };
+    }
+}
+
+/**
+ * IP 주소 마스킹 (개인정보 보호)
+ * @param {string} ip - IP 주소
+ * @returns {string} 마스킹된 IP 주소
+ */
+function maskIPAddress(ip) {
+    if (!ip) return '알 수 없음';
+
+    // IPv4: 마지막 옥텟 마스킹 (예: 192.168.1.100 -> 192.168.1.***)
+    if (ip.includes('.')) {
+        const parts = ip.split('.');
+        if (parts.length === 4) {
+            parts[3] = '***';
+            return parts.join('.');
+        }
+    }
+
+    // IPv6: 마지막 4개 세그먼트 마스킹
+    if (ip.includes(':')) {
+        const parts = ip.split(':');
+        if (parts.length >= 4) {
+            for (let i = parts.length - 4; i < parts.length; i++) {
+                parts[i] = '****';
+            }
+            return parts.join(':');
+        }
+    }
+
+    return ip;
+}
+
+/**
+ * 로그인 시도 기록
+ * @param {object} params - 로그 파라미터
+ * @param {number|null} params.userId - 사용자 ID (실패 시 null)
+ * @param {string|null} params.username - 시도한 사용자명
+ * @param {string} params.ipAddress - IP 주소
+ * @param {number} params.port - 포트 번호
+ * @param {boolean} params.success - 성공 여부
+ * @param {string|null} params.failureReason - 실패 사유
+ * @param {string|null} params.userAgent - User-Agent 헤더
+ */
+async function recordLoginAttempt(params) {
+    try {
+        const {
+            userId,
+            username,
+            ipAddress,
+            port,
+            success,
+            failureReason,
+            userAgent
+        } = params;
+
+        // GeoIP 정보 조회
+        const location = getLocationFromIP(ipAddress);
+
+        // 현재 시각
+        const now = formatDateForDb(new Date());
+
+        await pool.execute(
+            `INSERT INTO login_logs (
+                user_id, username, ip_address, port,
+                country, region, city, timezone,
+                user_agent, success, failure_reason, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                userId,
+                username,
+                ipAddress,
+                port,
+                location.country,
+                location.region,
+                location.city,
+                location.timezone,
+                userAgent,
+                success ? 1 : 0,
+                failureReason,
+                now
+            ]
+        );
+
+        console.log(`[로그인 로그] 사용자: ${username || '알 수 없음'}, 성공: ${success}, IP: ${ipAddress}`);
+    } catch (error) {
+        console.error('로그인 로그 기록 실패:', error);
+        // 로그 기록 실패가 로그인 프로세스를 방해하지 않도록 에러를 던지지 않음
+    }
 }
 
 /**
@@ -763,6 +915,31 @@ async function initDb() {
                 ON DELETE CASCADE,
             INDEX idx_token_active (token, is_active),
             INDEX idx_page_id (page_id)
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+    `);
+
+    // login_logs 테이블 생성 (로그인 시도 기록)
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS login_logs (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NULL,
+            username VARCHAR(64) NULL,
+            ip_address VARCHAR(45) NOT NULL,
+            port INT NOT NULL,
+            country VARCHAR(2) NULL,
+            region VARCHAR(100) NULL,
+            city VARCHAR(100) NULL,
+            timezone VARCHAR(100) NULL,
+            user_agent TEXT NULL,
+            success TINYINT(1) NOT NULL,
+            failure_reason VARCHAR(100) NULL,
+            created_at DATETIME NOT NULL,
+            INDEX idx_user_logs (user_id, created_at DESC),
+            INDEX idx_created_at (created_at),
+            CONSTRAINT fk_login_logs_user
+                FOREIGN KEY (user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
@@ -1865,6 +2042,10 @@ function cleanupWebSocketConnection(ws) {
     try {
         await initDb();
 
+        // 로그인 로그 정리 작업 시작 (pool 초기화 후)
+        setInterval(cleanupOldLoginLogs, 24 * 60 * 60 * 1000);
+        cleanupOldLoginLogs();
+
         // ==================== 라우트 Import (DB 초기화 후) ====================
 
         /**
@@ -1921,7 +2102,10 @@ function cleanupWebSocketConnection(ws) {
             coverUpload,
             editorImageUpload,
             path,
-            fs
+            fs,
+            recordLoginAttempt,
+            getLocationFromIP,
+            maskIPAddress
         };
 
         // 라우트 파일 Import
