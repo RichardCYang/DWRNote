@@ -944,10 +944,31 @@ async function init() {
     bindAccountManagementButtons();
     bindLoginLogsModal();
 
-    // 데이터 로드
-    await fetchAndDisplayCurrentUser();
-    await fetchCollections();
-    await fetchPageList();
+    // 데이터 로드 - 병렬 처리로 최적화 (성능 개선)
+    try {
+        // 1. 사용자 정보 먼저 로드 (다른 API 호출에 필요할 수 있음)
+        await fetchAndDisplayCurrentUser();
+
+        // 2. 컬렉션과 페이지 목록을 병렬로 로드
+        const [collectionsResult, pagesResult] = await Promise.allSettled([
+            fetchCollections(),
+            fetchPageList()
+        ]);
+
+        // 에러 처리
+        if (collectionsResult.status === 'rejected') {
+            console.error('컬렉션 로드 실패:', collectionsResult.reason);
+            showErrorInEditor('컬렉션을 불러오지 못했습니다.');
+        }
+
+        if (pagesResult.status === 'rejected') {
+            console.error('페이지 로드 실패:', pagesResult.reason);
+            showErrorInEditor('페이지 목록을 불러오지 못했습니다.');
+        }
+    } catch (error) {
+        console.error('초기화 중 오류:', error);
+        showErrorInEditor('데이터 로드에 실패했습니다. 페이지를 새로고침하세요.');
+    }
 }
 
 // ==================== 마스터 키 시스템 제거됨 ====================

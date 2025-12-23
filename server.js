@@ -18,9 +18,22 @@ const multer = require("multer");
 const fs = require("fs");
 const WebSocket = require("ws");
 const geoip = require("geoip-lite");
+const compression = require("compression");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// HTTP 압축 활성화 (성능 최적화)
+app.use(compression({
+    filter: (req, res) => {
+        if (req.headers['x-no-compression']) {
+            return false;
+        }
+        return compression.filter(req, res);
+    },
+    level: 6, // 압축 레벨 (1-9, 6이 균형적)
+    threshold: 1024 // 1KB 이상만 압축
+}));
 
 // 세션 / 인증 관련 설정
 const SESSION_COOKIE_NAME = "nteok_session";
@@ -952,6 +965,62 @@ async function initDb() {
 
     // 컬렉션이 없는 기존 사용자 데이터 마이그레이션
     await backfillCollections();
+
+    // ============================================================
+    // 성능 최적화: 데이터베이스 인덱스 추가
+    // ============================================================
+
+    // pages 테이블 인덱스 (컬렉션별 페이지 조회 최적화)
+    try {
+        await pool.execute(`
+            CREATE INDEX IF NOT EXISTS idx_pages_collection_user
+            ON pages(collection_id, user_id)
+        `);
+        console.log('✓ pages.collection_id, user_id 인덱스 생성 완료');
+    } catch (error) {
+        if (error.code !== 'ER_DUP_KEYNAME') {
+            console.warn('pages 인덱스 생성 중 경고:', error.message);
+        }
+    }
+
+    // pages 테이블 인덱스 (사용자별 최신 페이지 조회 최적화)
+    try {
+        await pool.execute(`
+            CREATE INDEX IF NOT EXISTS idx_pages_user_updated
+            ON pages(user_id, updated_at DESC)
+        `);
+        console.log('✓ pages.user_id, updated_at 인덱스 생성 완료');
+    } catch (error) {
+        if (error.code !== 'ER_DUP_KEYNAME') {
+            console.warn('pages 인덱스 생성 중 경고:', error.message);
+        }
+    }
+
+    // pages 테이블 인덱스 (하위 페이지 정렬 최적화)
+    try {
+        await pool.execute(`
+            CREATE INDEX IF NOT EXISTS idx_pages_parent_sort
+            ON pages(parent_id, sort_order)
+        `);
+        console.log('✓ pages.parent_id, sort_order 인덱스 생성 완료');
+    } catch (error) {
+        if (error.code !== 'ER_DUP_KEYNAME') {
+            console.warn('pages 인덱스 생성 중 경고:', error.message);
+        }
+    }
+
+    // collections 테이블 인덱스 (사용자별 컬렉션 조회 최적화)
+    try {
+        await pool.execute(`
+            CREATE INDEX IF NOT EXISTS idx_collections_user_sort
+            ON collections(user_id, sort_order, updated_at DESC)
+        `);
+        console.log('✓ collections.user_id, sort_order 인덱스 생성 완료');
+    } catch (error) {
+        if (error.code !== 'ER_DUP_KEYNAME') {
+            console.warn('collections 인덱스 생성 중 경고:', error.message);
+        }
+    }
 }
 
 /**
@@ -1402,7 +1471,32 @@ app.use("/api", csrfMiddleware);
 // 일반 API 레이트 리밋 적용
 app.use("/api", generalLimiter);
 
-app.use(express.static(path.join(__dirname, "public"), { index: false }));
+// 정적 자산 캐싱 설정 (성능 최적화)
+app.use(express.static(path.join(__dirname, "public"), {
+    index: false,
+    maxAge: IS_PRODUCTION ? '7d' : 0, // 프로덕션: 7일, 개발: 캐시 안 함
+    etag: true, // ETag 활성화 (변경 감지)
+    lastModified: true, // Last-Modified 헤더 추가
+    immutable: IS_PRODUCTION, // Cache-Control: immutable 추가 (프로덕션만)
+    setHeaders: (res, filePath, stat) => {
+        // HTML 파일은 캐시 안 함 (동적 업데이트 필요)
+        if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+        }
+        // JS/CSS는 적극적으로 캐싱
+        else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+            res.setHeader('Cache-Control', IS_PRODUCTION
+                ? 'public, max-age=604800, immutable' // 7일, 불변
+                : 'no-cache');
+        }
+        // 이미지/폰트는 장기 캐싱
+        else if (filePath.match(/\.(jpg|jpeg|png|gif|ico|svg|woff|woff2|ttf|eot)$/)) {
+            res.setHeader('Cache-Control', 'public, max-age=2592000, immutable'); // 30일
+        }
+    }
+}));
 
 // 보안 개선: 정적 파일 접근 제어 (인증된 사용자만 접근 가능)
 // 기본 커버 이미지는 인증 없이 접근 가능

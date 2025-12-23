@@ -29,6 +29,7 @@ module.exports = (dependencies) => {
         try {
             const userId = req.user.id;
 
+            // 성능 최적화: 서브쿼리를 LEFT JOIN으로 변경 (N+1 문제 해결)
             const [rows] = await pool.execute(
                 `SELECT c.id, c.name, c.sort_order, c.created_at, c.updated_at,
                         c.user_id as owner_id, c.is_encrypted,
@@ -37,9 +38,14 @@ module.exports = (dependencies) => {
                             WHEN c.user_id = ? THEN 'OWNER'
                             ELSE cs.permission
                         END as permission,
-                        (SELECT COUNT(*) FROM collection_shares WHERE collection_id = c.id) as share_count
+                        COALESCE(sc.share_count, 0) as share_count
                  FROM collections c
                  LEFT JOIN collection_shares cs ON c.id = cs.collection_id AND cs.shared_with_user_id = ?
+                 LEFT JOIN (
+                     SELECT collection_id, COUNT(*) as share_count
+                     FROM collection_shares
+                     GROUP BY collection_id
+                 ) sc ON c.id = sc.collection_id
                  WHERE c.user_id = ? OR cs.shared_with_user_id IS NOT NULL
                  ORDER BY c.sort_order ASC, c.updated_at DESC`,
                 [userId, userId, userId]
