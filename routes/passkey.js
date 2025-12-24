@@ -211,6 +211,236 @@ module.exports = (dependencies) => {
     });
 
     /**
+     * 패스키 직접 로그인 시작 - 챌린지 생성 (비밀번호 없이)
+     * POST /api/passkey/login/options
+     */
+    router.post("/login/options", async (req, res) => {
+        try {
+            const { username } = req.body;
+
+            if (!username) {
+                return res.status(400).json({ error: "아이디를 입력해주세요." });
+            }
+
+            // 사용자 조회
+            const [userRows] = await pool.execute(
+                "SELECT id, passkey_enabled FROM users WHERE username = ?",
+                [username]
+            );
+
+            if (userRows.length === 0) {
+                return res.status(404).json({ error: "존재하지 않는 아이디입니다." });
+            }
+
+            const user = userRows[0];
+
+            if (!user.passkey_enabled) {
+                return res.status(400).json({ error: "패스키가 등록되지 않은 계정입니다." });
+            }
+
+            // 사용자의 등록된 패스키 조회
+            const [passkeys] = await pool.execute(
+                "SELECT credential_id, transports FROM passkeys WHERE user_id = ?",
+                [user.id]
+            );
+
+            if (passkeys.length === 0) {
+                return res.status(404).json({ error: "등록된 패스키가 없습니다." });
+            }
+
+            const options = await generateAuthenticationOptions({
+                rpID: rpID,
+                timeout: 60000,
+                allowCredentials: passkeys.map(pk => ({
+                    id: pk.credential_id,
+                    type: 'public-key',
+                    transports: pk.transports ? pk.transports.split(',') : ['usb', 'ble', 'nfc', 'internal', 'hybrid']
+                })),
+                userVerification: 'preferred'
+            });
+
+            // 챌린지를 데이터베이스에 저장 (user_id와 함께)
+            const now = new Date();
+            const expiresAt = new Date(now.getTime() + 5 * 60 * 1000);
+
+            // 임시 세션 ID 생성 (패스키 로그인용)
+            const tempSessionId = crypto.randomBytes(32).toString('hex');
+
+            await pool.execute(
+                `INSERT INTO webauthn_challenges
+                 (user_id, session_id, challenge, operation, created_at, expires_at)
+                 VALUES (?, ?, ?, 'passkey_login', ?, ?)`,
+                [user.id, tempSessionId, options.challenge, formatDateForDb(now), formatDateForDb(expiresAt)]
+            );
+
+            res.json({
+                ...options,
+                tempSessionId: tempSessionId
+            });
+        } catch (error) {
+            logError("POST /api/passkey/login/options", error);
+            res.status(500).json({ error: "패스키 로그인 옵션 생성 중 오류가 발생했습니다." });
+        }
+    });
+
+    /**
+     * 패스키 직접 로그인 완료 - 검증 및 세션 생성 (비밀번호 없이)
+     * POST /api/passkey/login/verify
+     */
+    router.post("/login/verify", passkeyLimiter, async (req, res) => {
+        try {
+            const { credential, tempSessionId } = req.body;
+
+            if (!credential || !tempSessionId) {
+                return res.status(400).json({ error: "인증 정보가 없습니다." });
+            }
+
+            // 챌린지 조회
+            const [challenges] = await pool.execute(
+                `SELECT user_id, challenge FROM webauthn_challenges
+                 WHERE session_id = ? AND operation = 'passkey_login'
+                 AND expires_at > NOW()
+                 ORDER BY created_at DESC LIMIT 1`,
+                [tempSessionId]
+            );
+
+            if (challenges.length === 0) {
+                return res.status(400).json({ error: "유효한 챌린지를 찾을 수 없습니다. 다시 시도해 주세요." });
+            }
+
+            const expectedChallenge = challenges[0].challenge;
+            const userId = challenges[0].user_id;
+
+            // credential_id로 패스키 조회
+            const credentialIdBase64 = credential.id;
+            const [passkeys] = await pool.execute(
+                "SELECT id, public_key, counter, transports FROM passkeys WHERE credential_id = ? AND user_id = ?",
+                [credentialIdBase64, userId]
+            );
+
+            if (passkeys.length === 0) {
+                return res.status(404).json({ error: "등록되지 않은 패스키입니다." });
+            }
+
+            const passkey = passkeys[0];
+            const publicKey = Buffer.from(passkey.public_key, 'base64');
+
+            // 패스키 검증
+            const verification = await verifyAuthenticationResponse({
+                response: credential,
+                expectedChallenge: expectedChallenge,
+                expectedOrigin: expectedOrigin,
+                expectedRPID: rpID,
+                credential: {
+                    id: credentialIdBase64,
+                    publicKey: publicKey,
+                    counter: passkey.counter,
+                    transports: passkey.transports ? passkey.transports.split(',') : []
+                },
+                requireUserVerification: false
+            });
+
+            if (!verification.verified) {
+                // 사용자 정보 조회하여 로그 기록
+                const [userRows] = await pool.execute(
+                    "SELECT username FROM users WHERE id = ?",
+                    [userId]
+                );
+                const username = userRows.length > 0 ? userRows[0].username : '알 수 없음';
+
+                // 로그인 로그 기록
+                await recordLoginAttempt({
+                    userId: userId,
+                    username: username,
+                    ipAddress: req.ip || req.connection.remoteAddress,
+                    port: req.connection.remotePort || 0,
+                    success: false,
+                    failureReason: '패스키 로그인 인증 실패',
+                    userAgent: req.headers['user-agent'] || null
+                });
+
+                return res.status(401).json({ error: "패스키 인증에 실패했습니다." });
+            }
+
+            // Counter 업데이트
+            const newCounter = verification.authenticationInfo.newCounter;
+            const now = new Date();
+            const nowStr = formatDateForDb(now);
+
+            await pool.execute(
+                "UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?",
+                [newCounter, nowStr, passkey.id]
+            );
+
+            // 정식 세션 생성
+            const [userRows] = await pool.execute(
+                "SELECT username, block_duplicate_login FROM users WHERE id = ?",
+                [userId]
+            );
+
+            if (userRows.length === 0) {
+                return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
+            }
+
+            const { username, block_duplicate_login } = userRows[0];
+
+            // 세션 생성
+            const sessionResult = createSession({
+                id: userId,
+                username: username,
+                blockDuplicateLogin: block_duplicate_login
+            });
+
+            // 중복 로그인 차단 모드에서 거부된 경우
+            if (!sessionResult.success) {
+                return res.status(409).json({
+                    error: sessionResult.error,
+                    code: 'DUPLICATE_LOGIN_BLOCKED'
+                });
+            }
+
+            const sessionId = sessionResult.sessionId;
+
+            // 사용된 챌린지 삭제
+            await pool.execute(
+                "DELETE FROM webauthn_challenges WHERE user_id = ? AND session_id = ? AND operation = 'passkey_login'",
+                [userId, tempSessionId]
+            );
+
+            res.cookie(SESSION_COOKIE_NAME, sessionId, {
+                httpOnly: true,
+                secure: IS_PRODUCTION,
+                sameSite: "strict",
+                maxAge: SESSION_TTL_MS
+            });
+
+            const csrfToken = generateCsrfToken();
+            res.cookie(CSRF_COOKIE_NAME, csrfToken, {
+                httpOnly: false,
+                secure: IS_PRODUCTION,
+                sameSite: "strict",
+                maxAge: SESSION_TTL_MS
+            });
+
+            res.json({ success: true });
+
+            // 로그인 로그 기록 (비동기, 응답 후)
+            recordLoginAttempt({
+                userId: userId,
+                username: username,
+                ipAddress: req.ip || req.connection.remoteAddress,
+                port: req.connection.remotePort || 0,
+                success: true,
+                failureReason: null,
+                userAgent: req.headers['user-agent'] || null
+            });
+        } catch (error) {
+            logError("POST /api/passkey/login/verify", error);
+            res.status(500).json({ error: "패스키 로그인 중 오류가 발생했습니다." });
+        }
+    });
+
+    /**
      * 패스키 로그인 인증 시작 - 챌린지 생성
      * POST /api/passkey/authenticate/options
      */

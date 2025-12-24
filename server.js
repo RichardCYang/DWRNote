@@ -651,7 +651,9 @@ function csrfMiddleware(req, res, next) {
         req.path === "/totp/verify-login" ||
         req.path === "/totp/verify-backup-code" ||
         req.path === "/passkey/authenticate/options" ||
-        req.path === "/passkey/authenticate/verify") {
+        req.path === "/passkey/authenticate/verify" ||
+        req.path === "/passkey/login/options" ||
+        req.path === "/passkey/login/verify") {
         return next();
     }
 

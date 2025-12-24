@@ -211,6 +211,12 @@ document.addEventListener("DOMContentLoaded", () => {
         form.addEventListener("submit", handleLogin);
     }
 
+    // 패스키로 로그인 버튼 이벤트 바인딩
+    const passkeyLoginBtn = document.querySelector("#passkey-login-btn");
+    if (passkeyLoginBtn) {
+        passkeyLoginBtn.addEventListener("click", handlePasskeyLogin);
+    }
+
     // TOTP 검증 모달 이벤트 바인딩
     const verifyBtn = document.querySelector("#verify-totp-login-btn");
     if (verifyBtn) {
@@ -354,4 +360,93 @@ async function startPasskeyAuth() {
 function closePasskeyAuthModal() {
     const modal = document.querySelector("#passkey-auth-modal");
     if (modal) modal.classList.add("hidden");
+}
+
+// 패스키 직접 로그인 (비밀번호 없이)
+async function handlePasskeyLogin(event) {
+    event.preventDefault();
+
+    const usernameInput = document.querySelector("#username");
+    const errorEl = document.querySelector("#login-error");
+
+    if (!usernameInput || !errorEl) {
+        return;
+    }
+
+    const username = usernameInput.value.trim();
+    errorEl.textContent = "";
+
+    if (!username) {
+        errorEl.textContent = "아이디를 입력해 주세요.";
+        return;
+    }
+
+    try {
+        // 1. 서버에서 패스키 로그인 옵션 가져오기
+        const optionsRes = await fetch("/api/passkey/login/options", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username })
+        });
+
+        if (!optionsRes.ok) {
+            const errorData = await optionsRes.json();
+            errorEl.textContent = errorData.error || "패스키 로그인을 시작할 수 없습니다.";
+            return;
+        }
+
+        const options = await optionsRes.json();
+        const tempSessionId = options.tempSessionId;
+
+        // 패스키 인증 모달 표시
+        const modal = document.querySelector("#passkey-auth-modal");
+        const passkeyErrorEl = document.querySelector("#passkey-auth-error");
+        if (modal) modal.classList.remove("hidden");
+        if (passkeyErrorEl) passkeyErrorEl.textContent = "";
+
+        // 2. SimpleWebAuthn 브라우저 라이브러리로 인증 시작
+        const webAuthn = await loadSimpleWebAuthn();
+        const credential = await webAuthn.startAuthentication(options);
+
+        // 3. 서버에서 인증 검증
+        const verifyRes = await fetch("/api/passkey/login/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                credential: credential,
+                tempSessionId: tempSessionId
+            })
+        });
+
+        if (!verifyRes.ok) {
+            const errorData = await verifyRes.json();
+
+            // 중복 로그인 차단 에러 처리
+            if (verifyRes.status === 409 && errorData.code === 'DUPLICATE_LOGIN_BLOCKED') {
+                if (passkeyErrorEl) {
+                    passkeyErrorEl.textContent = errorData.error + " 기존 세션을 종료하거나 설정을 변경하세요.";
+                }
+            } else {
+                if (passkeyErrorEl) {
+                    passkeyErrorEl.textContent = errorData.error || "인증에 실패했습니다.";
+                }
+            }
+            return;
+        }
+
+        // 로그인 성공
+        window.location.href = "/";
+    } catch (error) {
+        console.error("패스키 로그인 실패:", error);
+
+        // 모달이 열려있으면 모달 내부 에러, 아니면 전역 에러
+        const modal = document.querySelector("#passkey-auth-modal");
+        const passkeyErrorEl = document.querySelector("#passkey-auth-error");
+
+        if (modal && !modal.classList.contains("hidden") && passkeyErrorEl) {
+            passkeyErrorEl.textContent = error.message || "패스키 인증 중 오류가 발생했습니다.";
+        } else {
+            errorEl.textContent = error.message || "패스키 로그인 중 오류가 발생했습니다.";
+        }
+    }
 }
