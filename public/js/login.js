@@ -376,27 +376,44 @@ async function handlePasskeyLogin(event) {
     const username = usernameInput.value.trim();
     errorEl.textContent = "";
 
-    if (!username) {
-        errorEl.textContent = "아이디를 입력해 주세요.";
-        return;
-    }
-
     try {
-        // 1. 서버에서 패스키 로그인 옵션 가져오기
-        const optionsRes = await fetch("/api/passkey/login/options", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username })
-        });
+        let optionsRes, options, tempSessionId;
 
-        if (!optionsRes.ok) {
-            const errorData = await optionsRes.json();
-            errorEl.textContent = errorData.error || "패스키 로그인을 시작할 수 없습니다.";
-            return;
+        // 아이디가 입력되지 않은 경우: Userless 인증 (Discoverable Credentials)
+        if (!username) {
+            // 1. 서버에서 userless 패스키 로그인 옵션 가져오기
+            optionsRes = await fetch("/api/passkey/login/userless/options", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({})
+            });
+
+            if (!optionsRes.ok) {
+                const errorData = await optionsRes.json();
+                errorEl.textContent = errorData.error || "패스키 로그인을 시작할 수 없습니다.";
+                return;
+            }
+
+            options = await optionsRes.json();
+            tempSessionId = options.tempSessionId;
+        } else {
+            // 아이디가 입력된 경우: username 기반 인증
+            // 1. 서버에서 패스키 로그인 옵션 가져오기
+            optionsRes = await fetch("/api/passkey/login/options", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username })
+            });
+
+            if (!optionsRes.ok) {
+                const errorData = await optionsRes.json();
+                errorEl.textContent = errorData.error || "패스키 로그인을 시작할 수 없습니다.";
+                return;
+            }
+
+            options = await optionsRes.json();
+            tempSessionId = options.tempSessionId;
         }
-
-        const options = await optionsRes.json();
-        const tempSessionId = options.tempSessionId;
 
         // 패스키 인증 모달 표시
         const modal = document.querySelector("#passkey-auth-modal");
@@ -409,7 +426,11 @@ async function handlePasskeyLogin(event) {
         const credential = await webAuthn.startAuthentication(options);
 
         // 3. 서버에서 인증 검증
-        const verifyRes = await fetch("/api/passkey/login/verify", {
+        const verifyEndpoint = username
+            ? "/api/passkey/login/verify"
+            : "/api/passkey/login/userless/verify";
+
+        const verifyRes = await fetch(verifyEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

@@ -653,7 +653,9 @@ function csrfMiddleware(req, res, next) {
         req.path === "/passkey/authenticate/options" ||
         req.path === "/passkey/authenticate/verify" ||
         req.path === "/passkey/login/options" ||
-        req.path === "/passkey/login/verify") {
+        req.path === "/passkey/login/verify" ||
+        req.path === "/passkey/login/userless/options" ||
+        req.path === "/passkey/login/userless/verify") {
         return next();
     }
 
