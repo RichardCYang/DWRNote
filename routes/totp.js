@@ -33,7 +33,8 @@ module.exports = (dependencies) => {
         IS_PRODUCTION,
         BCRYPT_SALT_ROUNDS,
         logError,
-        recordLoginAttempt
+        recordLoginAttempt,
+        checkCountryWhitelist
     } = dependencies;
 
     /**
@@ -224,7 +225,7 @@ module.exports = (dependencies) => {
             const userId = tempSession.pendingUserId;
 
             const [rows] = await pool.execute(
-                "SELECT totp_secret, username, block_duplicate_login FROM users WHERE id = ? AND totp_enabled = 1",
+                "SELECT totp_secret, username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries FROM users WHERE id = ? AND totp_enabled = 1",
                 [userId]
             );
 
@@ -232,7 +233,7 @@ module.exports = (dependencies) => {
                 return res.status(404).json({ error: "TOTP가 활성화되지 않았습니다." });
             }
 
-            const { totp_secret, username, block_duplicate_login } = rows[0];
+            const { totp_secret, username, block_duplicate_login, country_whitelist_enabled, allowed_login_countries } = rows[0];
 
             const verified = speakeasy.totp.verify({
                 secret: totp_secret,
@@ -254,6 +255,33 @@ module.exports = (dependencies) => {
                 });
 
                 return res.status(401).json({ error: "잘못된 인증 코드입니다." });
+            }
+
+            // 국가 화이트리스트 체크
+            const countryCheck = checkCountryWhitelist(
+                {
+                    country_whitelist_enabled: country_whitelist_enabled,
+                    allowed_login_countries: allowed_login_countries
+                },
+                req.ip || req.connection.remoteAddress
+            );
+
+            if (!countryCheck.allowed) {
+                await recordLoginAttempt({
+                    userId: userId,
+                    username: username,
+                    ipAddress: req.ip || req.connection.remoteAddress,
+                    port: req.connection.remotePort || 0,
+                    success: false,
+                    failureReason: countryCheck.reason,
+                    userAgent: req.headers['user-agent'] || null
+                });
+
+                console.warn(`[로그인 실패] IP: ${req.ip}, 사유: ${countryCheck.reason}`);
+                sessions.delete(tempSessionId);
+                return res.status(403).json({
+                    error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요."
+                });
             }
 
             // 세션 생성

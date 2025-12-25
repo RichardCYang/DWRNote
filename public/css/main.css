@@ -973,6 +973,27 @@ body {
     color: #2d2d2d;
 }
 
+.modal-back-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 3px;
+    background-color: transparent;
+    color: #5a6169;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    transition: background-color 0.1s ease;
+    margin-right: auto;
+}
+
+.modal-back-btn:hover {
+    background-color: #ebe8e1;
+    color: #2d2d2d;
+}
+
 .modal-body {
     flex: 1;
     overflow-y: auto;
@@ -1016,10 +1037,12 @@ body {
     border-bottom: none;
 }
 
-.settings-item label {
+.settings-item > label:first-child {
     font-size: 14px;
     font-weight: 500;
     color: #2d2d2d;
+    flex-shrink: 0;
+    min-width: 160px;
 }
 
 .settings-value {
@@ -1861,7 +1884,7 @@ body {
 }
 
 .settings-button {
-    padding: 6px 16px !important;
+    padding: 6px 8px !important;
     font-size: 13px !important;
     min-width: 100px;
 }
@@ -3032,4 +3055,68 @@ body {
 /* 에디터 내부에서만 표시 */
 #editor .remote-cursor-container {
     display: block;
+}
+
+/* ==================== 국가 화이트리스트 ==================== */
+
+/* 국가 화이트리스트 컨테이너 */
+#country-whitelist-container {
+    width: 100%;
+}
+
+/* 선택된 국가 목록 표시 */
+#selected-countries-list {
+    padding: 8px;
+    background-color: #f9f9f9;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+    font-size: 13px;
+}
+
+/* 국가 목록 컨테이너 */
+#country-list-container {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 8px;
+}
+
+/* 국가 목록 아이템 */
+#country-list-container label {
+    display: flex;
+    align-items: center;
+    padding: 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+}
+
+#country-list-container label:hover {
+    background-color: #f5f5f5;
+}
+
+#country-list-container input[type="checkbox"] {
+    margin-right: 8px;
+    cursor: pointer;
+}
+
+/* 보조 버튼 스타일 */
+.secondary-button {
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+.secondary-button:hover {
+    background-color: #5a6268;
+}
+
+.secondary-button:active {
+    background-color: #545b62;
 }

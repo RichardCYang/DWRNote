@@ -204,14 +204,28 @@ function formatDateForDb(date) {
  */
 function getLocationFromIP(ip) {
     try {
-        // 로컬 개발 환경 (localhost, 127.0.0.1, ::1, 사설 IP)
-        if (!ip || ip === '::1' || ip === '127.0.0.1' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.16.')) {
+        // 사설 IP 또는 localhost는 null 반환 (국가 화이트리스트 체크에서 별도 처리)
+        if (!ip || ip === '::1' || ip === '127.0.0.1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
             return {
-                country: 'KR',
-                region: '서울',
-                city: '서울',
-                timezone: 'Asia/Seoul'
+                country: null,
+                region: null,
+                city: null,
+                timezone: null
             };
+        }
+
+        // 172.16.0.0 ~ 172.31.255.255 범위 체크
+        const match = ip.match(/^172\.(\d+)\./);
+        if (match) {
+            const secondOctet = parseInt(match[1]);
+            if (secondOctet >= 16 && secondOctet <= 31) {
+                return {
+                    country: null,
+                    region: null,
+                    city: null,
+                    timezone: null
+                };
+            }
         }
 
         const geo = geoip.lookup(ip);
@@ -240,6 +254,87 @@ function getLocationFromIP(ip) {
             timezone: null
         };
     }
+}
+
+/**
+ * 사설 IP 또는 localhost 확인
+ * @param {string} ip - IP 주소
+ * @returns {boolean} 사설 IP 또는 localhost 여부
+ */
+function isPrivateOrLocalIP(ip) {
+    if (!ip || ip === '::1' || ip === '127.0.0.1') return true;
+    if (ip.startsWith('192.168.') || ip.startsWith('10.')) return true;
+
+    // 172.16.0.0 ~ 172.31.255.255 범위 체크
+    const match = ip.match(/^172\.(\d+)\./);
+    if (match) {
+        const secondOctet = parseInt(match[1]);
+        if (secondOctet >= 16 && secondOctet <= 31) return true;
+    }
+
+    return false;
+}
+
+/**
+ * 국가 화이트리스트 체크
+ * @param {object} userSettings - { country_whitelist_enabled, allowed_login_countries }
+ * @param {string} ipAddress - IP 주소
+ * @returns {object} { allowed: boolean, reason?: string }
+ */
+function checkCountryWhitelist(userSettings, ipAddress) {
+    // 1. 사설 IP/localhost는 항상 허용
+    if (isPrivateOrLocalIP(ipAddress)) {
+        return { allowed: true };
+    }
+
+    // 2. 화이트리스트가 비활성화되어 있으면 허용
+    if (!userSettings.country_whitelist_enabled) {
+        return { allowed: true };
+    }
+
+    // 3. IP로부터 국가 정보 조회
+    const location = getLocationFromIP(ipAddress);
+
+    // 4. GeoIP 조회 실패 시 차단 (사용자 설정: 엄격한 보안)
+    if (!location.country) {
+        return {
+            allowed: false,
+            reason: 'GeoIP 조회 실패 - 국가를 확인할 수 없음'
+        };
+    }
+
+    // 5. 화이트리스트 파싱
+    let allowedCountries = [];
+    if (userSettings.allowed_login_countries) {
+        try {
+            allowedCountries = JSON.parse(userSettings.allowed_login_countries);
+        } catch (e) {
+            console.error('화이트리스트 파싱 오류:', e);
+            // 파싱 오류 시 차단 (안전한 기본값)
+            return {
+                allowed: false,
+                reason: '화이트리스트 설정 오류'
+            };
+        }
+    }
+
+    // 6. 화이트리스트가 비어있으면 모든 국가 차단 (사용자 설정)
+    if (!Array.isArray(allowedCountries) || allowedCountries.length === 0) {
+        return {
+            allowed: false,
+            reason: `허용되지 않은 국가에서의 로그인 시도 (감지된 국가: ${location.country})`
+        };
+    }
+
+    // 7. 국가 체크
+    if (!allowedCountries.includes(location.country)) {
+        return {
+            allowed: false,
+            reason: `허용되지 않은 국가에서의 로그인 시도 (감지된 국가: ${location.country})`
+        };
+    }
+
+    return { allowed: true };
 }
 
 /**
@@ -685,9 +780,38 @@ async function initDb() {
             totp_secret VARCHAR(64) NULL,
             totp_enabled TINYINT(1) NOT NULL DEFAULT 0,
             passkey_enabled TINYINT(1) NOT NULL DEFAULT 0,
-            block_duplicate_login TINYINT(1) NOT NULL DEFAULT 0
+            block_duplicate_login TINYINT(1) NOT NULL DEFAULT 0,
+            country_whitelist_enabled TINYINT(1) NOT NULL DEFAULT 0,
+            allowed_login_countries TEXT NULL
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
+
+    // 기존 users 테이블에 국가 화이트리스트 컬럼 추가 (마이그레이션)
+    try {
+        await pool.execute(`
+            ALTER TABLE users
+            ADD COLUMN country_whitelist_enabled TINYINT(1) NOT NULL DEFAULT 0
+        `);
+        console.log('✓ country_whitelist_enabled 컬럼 추가됨');
+    } catch (error) {
+        // 컬럼이 이미 존재하면 무시
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.error('country_whitelist_enabled 컬럼 추가 오류:', error.message);
+        }
+    }
+
+    try {
+        await pool.execute(`
+            ALTER TABLE users
+            ADD COLUMN allowed_login_countries TEXT NULL
+        `);
+        console.log('✓ allowed_login_countries 컬럼 추가됨');
+    } catch (error) {
+        // 컬럼이 이미 존재하면 무시
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+            console.error('allowed_login_countries 컬럼 추가 오류:', error.message);
+        }
+    }
 
     // (TOTP 컬럼들은 이제 CREATE TABLE에 포함됨)
 
@@ -2237,7 +2361,9 @@ function cleanupWebSocketConnection(ws) {
             fs,
             recordLoginAttempt,
             getLocationFromIP,
-            maskIPAddress
+            maskIPAddress,
+            isPrivateOrLocalIP,
+            checkCountryWhitelist
         };
 
         // 라우트 파일 Import

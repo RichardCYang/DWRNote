@@ -33,7 +33,8 @@ module.exports = (dependencies) => {
         authMiddleware,
         authLimiter,
         recordLoginAttempt,
-        maskIPAddress
+        maskIPAddress,
+        checkCountryWhitelist
     } = dependencies;
 
     /**
@@ -53,7 +54,8 @@ module.exports = (dependencies) => {
         try {
             const [rows] = await pool.execute(
                 `
-                SELECT id, username, password_hash, totp_enabled, passkey_enabled, block_duplicate_login
+                SELECT id, username, password_hash, totp_enabled, passkey_enabled, block_duplicate_login,
+                       country_whitelist_enabled, allowed_login_countries
                 FROM users
                 WHERE username = ?
                 `,
@@ -95,6 +97,32 @@ module.exports = (dependencies) => {
                 // 보안: 사용자 존재 여부를 노출하지 않도록 통일된 메시지 사용
                 console.warn(`[로그인 실패] IP: ${req.ip}, 사유: 인증 실패`);
                 return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
+            }
+
+            // 국가 화이트리스트 체크
+            const countryCheck = checkCountryWhitelist(
+                {
+                    country_whitelist_enabled: user.country_whitelist_enabled,
+                    allowed_login_countries: user.allowed_login_countries
+                },
+                req.ip || req.connection.remoteAddress
+            );
+
+            if (!countryCheck.allowed) {
+                await recordLoginAttempt({
+                    userId: user.id,
+                    username: user.username,
+                    ipAddress: req.ip || req.connection.remoteAddress,
+                    port: req.connection.remotePort || 0,
+                    success: false,
+                    failureReason: countryCheck.reason,
+                    userAgent: req.headers['user-agent'] || null
+                });
+
+                console.warn(`[로그인 실패] IP: ${req.ip}, 사유: ${countryCheck.reason}`);
+                return res.status(403).json({
+                    error: "현재 위치에서는 로그인할 수 없습니다. 계정 보안 설정을 확인하세요."
+                });
             }
 
             // 2FA(TOTP 또는 패스키) 활성화 확인
@@ -419,7 +447,7 @@ module.exports = (dependencies) => {
     router.get("/security-settings", authMiddleware, async (req, res) => {
         try {
             const [rows] = await pool.execute(
-                `SELECT block_duplicate_login FROM users WHERE id = ?`,
+                `SELECT block_duplicate_login, country_whitelist_enabled, allowed_login_countries FROM users WHERE id = ?`,
                 [req.user.id]
             );
 
@@ -427,8 +455,19 @@ module.exports = (dependencies) => {
                 return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
             }
 
+            let allowedCountries = [];
+            if (rows[0].allowed_login_countries) {
+                try {
+                    allowedCountries = JSON.parse(rows[0].allowed_login_countries);
+                } catch (e) {
+                    console.error('화이트리스트 파싱 오류:', e);
+                }
+            }
+
             res.json({
-                blockDuplicateLogin: rows[0].block_duplicate_login === 1
+                blockDuplicateLogin: rows[0].block_duplicate_login === 1,
+                countryWhitelistEnabled: rows[0].country_whitelist_enabled === 1,
+                allowedLoginCountries: allowedCountries
             });
         } catch (error) {
             logError("GET /api/auth/security-settings", error);
@@ -442,26 +481,67 @@ module.exports = (dependencies) => {
      * body: { blockDuplicateLogin: boolean }
      */
     router.put("/security-settings", authMiddleware, async (req, res) => {
-        const { blockDuplicateLogin } = req.body;
+        const { blockDuplicateLogin, countryWhitelistEnabled, allowedLoginCountries } = req.body;
 
-        if (typeof blockDuplicateLogin !== "boolean") {
+        // 유효성 검증
+        if (blockDuplicateLogin !== undefined && typeof blockDuplicateLogin !== "boolean") {
             return res.status(400).json({ error: "올바른 설정 값이 아닙니다." });
         }
 
+        if (countryWhitelistEnabled !== undefined && typeof countryWhitelistEnabled !== "boolean") {
+            return res.status(400).json({ error: "올바른 설정 값이 아닙니다." });
+        }
+
+        if (allowedLoginCountries !== undefined) {
+            if (!Array.isArray(allowedLoginCountries)) {
+                return res.status(400).json({ error: "허용 국가 목록은 배열이어야 합니다." });
+            }
+
+            // 국가 코드 형식 검증 (ISO 3166-1 alpha-2: 2자리 대문자)
+            const invalidCountry = allowedLoginCountries.find(
+                code => typeof code !== 'string' || !/^[A-Z]{2}$/.test(code)
+            );
+            if (invalidCountry) {
+                return res.status(400).json({ error: "유효하지 않은 국가 코드가 포함되어 있습니다." });
+            }
+        }
+
         try {
+            // 동적 UPDATE 쿼리 생성
+            const updates = [];
+            const values = [];
+
+            if (blockDuplicateLogin !== undefined) {
+                updates.push('block_duplicate_login = ?');
+                values.push(blockDuplicateLogin ? 1 : 0);
+            }
+
+            if (countryWhitelistEnabled !== undefined) {
+                updates.push('country_whitelist_enabled = ?');
+                values.push(countryWhitelistEnabled ? 1 : 0);
+            }
+
+            if (allowedLoginCountries !== undefined) {
+                updates.push('allowed_login_countries = ?');
+                values.push(JSON.stringify(allowedLoginCountries));
+            }
+
+            if (updates.length === 0) {
+                return res.status(400).json({ error: "업데이트할 설정이 없습니다." });
+            }
+
+            values.push(req.user.id);
+
             await pool.execute(
-                `UPDATE users SET block_duplicate_login = ? WHERE id = ?`,
-                [blockDuplicateLogin ? 1 : 0, req.user.id]
+                `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+                values
             );
 
             // 보안: 사용자명 일부만 표시
             const maskedUsername = req.user.username.substring(0, 2) + '***';
-            console.log(`[보안 설정] 사용자 ID ${req.user.id} (${maskedUsername}): 중복 로그인 차단 = ${blockDuplicateLogin}`);
+            console.log(`[보안 설정] 사용자 ID ${req.user.id} (${maskedUsername}): 설정 업데이트 완료`);
 
-            res.json({
-                ok: true,
-                blockDuplicateLogin: blockDuplicateLogin
-            });
+            res.json({ ok: true });
         } catch (error) {
             logError("PUT /api/auth/security-settings", error);
             res.status(500).json({ error: "보안 설정 업데이트 중 오류가 발생했습니다." });
@@ -560,6 +640,51 @@ module.exports = (dependencies) => {
             logError("GET /api/auth/login-logs/stats", error);
             res.status(500).json({ error: "로그인 로그 통계 조회 중 오류가 발생했습니다." });
         }
+    });
+
+    /**
+     * 국가 목록 조회
+     * GET /api/auth/countries
+     */
+    router.get("/countries", authMiddleware, (req, res) => {
+        const countries = [
+            { code: 'KR', name: '대한민국' },
+            { code: 'US', name: '미국' },
+            { code: 'JP', name: '일본' },
+            { code: 'CN', name: '중국' },
+            { code: 'GB', name: '영국' },
+            { code: 'DE', name: '독일' },
+            { code: 'FR', name: '프랑스' },
+            { code: 'CA', name: '캐나다' },
+            { code: 'AU', name: '호주' },
+            { code: 'SG', name: '싱가포르' },
+            { code: 'HK', name: '홍콩' },
+            { code: 'TW', name: '대만' },
+            { code: 'IN', name: '인도' },
+            { code: 'RU', name: '러시아' },
+            { code: 'BR', name: '브라질' },
+            { code: 'MX', name: '멕시코' },
+            { code: 'IT', name: '이탈리아' },
+            { code: 'ES', name: '스페인' },
+            { code: 'NL', name: '네덜란드' },
+            { code: 'SE', name: '스웨덴' },
+            { code: 'CH', name: '스위스' },
+            { code: 'PL', name: '폴란드' },
+            { code: 'BE', name: '벨기에' },
+            { code: 'AT', name: '오스트리아' },
+            { code: 'NO', name: '노르웨이' },
+            { code: 'DK', name: '덴마크' },
+            { code: 'FI', name: '핀란드' },
+            { code: 'IE', name: '아일랜드' },
+            { code: 'NZ', name: '뉴질랜드' },
+            { code: 'TH', name: '태국' },
+            { code: 'VN', name: '베트남' },
+            { code: 'MY', name: '말레이시아' },
+            { code: 'PH', name: '필리핀' },
+            { code: 'ID', name: '인도네시아' }
+        ];
+
+        res.json({ countries });
     });
 
     return router;
