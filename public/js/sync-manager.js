@@ -734,6 +734,8 @@ function setupEditorBinding() {
     });
 
     state.editor.on('update', ({ editor }) => {
+        console.log('[Sync] update 이벤트 감지, isUpdating:', isUpdating);
+
         // 원격 업데이트로 인한 변경은 무시
         if (isUpdating) {
             return;
@@ -751,9 +753,12 @@ function setupEditorBinding() {
             const newContent = editor.getHTML();
             const oldContent = yMetadata.get('content');
 
+            console.log('[Sync] 동기화 체크 - 변경됨:', newContent !== oldContent);
+
             if (newContent !== oldContent) {
                 // origin을 지정하지 않으면 로컬 업데이트로 처리됨
                 yMetadata.set('content', newContent);
+                console.log('[Sync] Yjs에 저장 완료');
             }
             updateTimeout = null; // 타이머 초기화
         }, 50);

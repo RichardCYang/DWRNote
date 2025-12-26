@@ -3120,3 +3120,169 @@ body {
 .secondary-button:active {
     background-color: #545b62;
 }
+
+/* =================================================================
+   콜아웃 블록 스타일
+   ================================================================= */
+
+/* 콜아웃 블록 기본 스타일 */
+.callout-block-wrapper {
+    margin: 1em 0;
+    border-radius: 8px;
+    border-left: 4px solid;
+    padding: 12px;
+    transition: all 0.15s ease;
+    position: relative;
+}
+
+/* 타입별 색상 - Info (정보) */
+.callout-block-wrapper[data-callout-type="info"] {
+    background: #e0f2fe;
+    border-color: #0ea5e9;
+}
+
+/* 타입별 색상 - Warning (경고) */
+.callout-block-wrapper[data-callout-type="warning"] {
+    background: #fef3c7;
+    border-color: #f59e0b;
+}
+
+/* 타입별 색상 - Error (에러) */
+.callout-block-wrapper[data-callout-type="error"] {
+    background: #fee2e2;
+    border-color: #ef4444;
+}
+
+/* 타입별 색상 - Success (성공) */
+.callout-block-wrapper[data-callout-type="success"] {
+    background: #dcfce7;
+    border-color: #22c55e;
+}
+
+/* 헤더 */
+.callout-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+/* 아이콘 */
+.callout-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+/* 제목 */
+.callout-title {
+    flex: 1;
+    font-weight: 600;
+    font-size: 14px;
+    min-height: 20px;
+    line-height: 1.4;
+    outline: none;
+}
+
+.callout-title:focus {
+    background-color: rgba(255, 255, 255, 0.5);
+    border-radius: 4px;
+    padding: 2px 4px;
+    margin: -2px -4px;
+}
+
+.callout-title:empty::before {
+    content: '제목';
+    color: #999;
+}
+
+/* 타입 선택 버튼 */
+.callout-type-selector {
+    padding: 4px 8px;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.callout-type-selector:hover {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(0, 0, 0, 0.3);
+}
+
+.callout-type-selector:active {
+    transform: scale(0.95);
+}
+
+/* 타입 팝업 */
+.callout-type-popup {
+    position: fixed;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    padding: 8px;
+    z-index: 1000;
+    min-width: 120px;
+}
+
+.callout-type-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.15s;
+    font-size: 14px;
+}
+
+.callout-type-option:hover {
+    background: #f5f5f5;
+}
+
+.callout-type-option:active {
+    background: #e5e5e5;
+}
+
+/* 내용 컨테이너 */
+.callout-content {
+    position: relative;
+}
+
+/* 내용 textarea */
+.callout-content-textarea {
+    width: 100%;
+    border: none;
+    background: transparent;
+    resize: none;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 2px 4px;
+    outline: none;
+    min-height: 24px;
+    overflow-y: hidden;
+}
+
+.callout-content-textarea:focus {
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+}
+
+.callout-content-textarea::placeholder {
+    color: #999;
+}
+
+/* 읽기 모드 스타일 */
+.callout-block-wrapper.read-only .callout-title {
+    cursor: default;
+}
+
+.callout-block-wrapper.read-only .callout-content-textarea {
+    cursor: default;
+}

@@ -35,6 +35,9 @@ import { ImageWithCaption } from './image-with-caption-node.js';
 // BookmarkBlock 노드 import
 import { BookmarkBlock, BookmarkContainerBlock } from './bookmark-node.js';
 
+// CalloutBlock 노드 import
+import { CalloutBlock } from './callout-node.js';
+
 // 전역 Tiptap 번들에서 Editor / StarterKit 가져오기
 const Editor = Tiptap.Core.Editor;
 const StarterKit = Tiptap.StarterKit;
@@ -269,6 +272,15 @@ export const SLASH_ITEMS = [
         icon: "🔖",
         command(editor) {
             editor.chain().focus().setBookmarkContainer().run();
+        }
+    },
+    {
+        id: "callout",
+        label: "콜아웃",
+        description: "정보, 경고, 에러, 성공 메시지 블록",
+        icon: "ℹ️",
+        command(editor) {
+            editor.chain().focus().setCallout('info', '', '').run();
         }
     }
 ];
@@ -884,6 +896,7 @@ export function initEditor() {
             ImageWithCaption,
             BookmarkContainerBlock,
             BookmarkBlock,
+            CalloutBlock,
         ],
         content: "<p>불러오는 중...</p>",
         onSelectionUpdate() {

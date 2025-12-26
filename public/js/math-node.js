@@ -91,11 +91,7 @@ export const MathBlock = Node.create({
                     if (!isEditing) {
                         if (editor.isEditable) {
                             showEditor();
-                        } else {
-                            console.warn('[MathBlock] 에디터가 읽기 모드입니다');
                         }
-                    } else {
-                        console.warn('[MathBlock] 이미 편집 모드입니다');
                     }
                 };
 
